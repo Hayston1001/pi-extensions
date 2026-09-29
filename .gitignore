@@ -1,0 +1,8 @@
+node_modules/
+debug.flag
+debug-dump.json
+*.log
+
+AGENTS.md
+.agents/
+local-docs/
