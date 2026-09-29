@@ -1,0 +1,134 @@
+name: publish
+
+# One package per tag: `timeline-v0.1.1`, `token-meter-v0.2.0`, ...
+
+on:
+  push:
+    tags:
+      - "*-v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: resolve package and version from the tag
+        id: target
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          pkg="${tag%-v*}"
+          version="${tag##*-v}"
+          dir="packages/${pkg}"
+
+          if [ ! -f "${dir}/package.json" ]; then
+            echo "::error::tag '${tag}' does not point at a package: ${dir}/package.json is missing"
+            exit 1
+          fi
+
+          name="$(node -p "require('./${dir}/package.json').name")"
+          declared="$(node -p "require('./${dir}/package.json').version")"
+
+          if [ "${declared}" != "${version}" ]; then
+            echo "::error::tag says ${version} but ${dir}/package.json says ${declared} -- bump the version, commit, then tag"
+            exit 1
+          fi
+
+          echo "dir=${dir}" >> "$GITHUB_OUTPUT"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "publishing ${name}@${version} from ${dir}"
+
+      - name: check npm supports trusted publishing
+        run: |
+          set -euo pipefail
+          version="$(npm --version)"
+          echo "npm ${version}"
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!ok) {
+              console.error(`::error::trusted publishing needs npm >= 11.5.1, this runner has ${process.argv[1]}`);
+              process.exit(1);
+            }
+          ' "$version"
+
+      - name: decide whether to publish
+        id: state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          name="${{ steps.target.outputs.name }}"
+          version="${{ steps.target.outputs.version }}"
+          publish=true
+
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            # Already on npm: either this tag is a duplicate, or a previous run
+            # published the package but failed before creating its release.
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "::error::${name}@${version} is already on npm and ${TAG} already has a release -- nothing to do. Bump the version in ${{ steps.target.outputs.dir }}/package.json, commit, then tag that version; or delete this tag if it was a mistake."
+              exit 1
+            fi
+            echo "::warning::${name}@${version} is already on npm -- publishing is skipped, only the missing GitHub release is created"
+            publish=false
+          else
+            echo "${name}@${version} is not on npm yet -- publishing"
+          fi
+
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+
+      - name: test
+        if: steps.state.outputs.publish == 'true'
+        working-directory: ${{ steps.target.outputs.dir }}
+        run: node test/run.mjs
+
+      - name: publish
+        if: steps.state.outputs.publish == 'true'
+        working-directory: ${{ steps.target.outputs.dir }}
+        run: npm publish
+
+      - name: create the GitHub release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.target.outputs.version }}
+          NAME: ${{ steps.target.outputs.name }}
+        run: |
+          set -euo pipefail
+          # Idempotent: never errors when the release already exists. Also the whole
+          # point of the decision step above, which routes a run that already has its
+          # package on npm but no release here.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists -- nothing to do"
+            exit 0
+          fi
+
+          dir="${{ steps.target.outputs.dir }}"
+          notes="$(mktemp)"
+          # Grab the "## <version>" section of the package changelog.
+          awk -v v="## ${VERSION}" '
+            index($0, v) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' "${dir}/CHANGELOG.md" > "$notes"
+          sed -i '/./,$!d' "$notes" # drop the blank line after the heading
+
+          if [ ! -s "$notes" ]; then
+            echo "no ${VERSION} section in ${dir}/CHANGELOG.md -- falling back to generated notes"
+            gh release create "$TAG" --title "${NAME}@${VERSION}" --generate-notes
+          else
+            gh release create "$TAG" --title "${NAME}@${VERSION}" --notes-file "$notes"
+          fi
