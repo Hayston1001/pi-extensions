@@ -1,0 +1,20 @@
+{
+  "name": "pi-timeline",
+  "version": "0.1.0",
+  "description": "Message timeline for pi: list a session's user messages and jump to any of them with exact, instant scrolling.",
+  "keywords": ["pi-package", "pi-extension", "timeline", "navigation"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hayston1001/pi-extensions.git",
+    "directory": "packages/timeline"
+  },
+  "files": ["src/index.ts", "src/i18n.ts", "README.md", "README_zh.md"],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
