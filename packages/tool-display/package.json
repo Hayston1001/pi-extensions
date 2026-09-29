@@ -1,6 +1,6 @@
 {
   "name": "@hayston/pi-tool-display",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Configurable tool-call display density for pi: mini / low / medium / default. Batch summary lines, compact rows, hover highlight and a settings command.",
   "keywords": ["pi-package", "pi-extension", "tool-display", "tui", "compact"],
   "license": "MIT",
