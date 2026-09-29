@@ -20,7 +20,7 @@ Result line:
 ↑286k ↓1.2k R13.4M W1.2M 57tok/s 3m32s · claude-opus-5 (high) $20.16
 ```
 
-> [!TIP] Reading the symbols
+> [!TIP]
 > `↑ input` input (uncached input)  
 > `↓ output` output (thinking tokens included)  
 > `R`/`W` cache read / cache write (shown when non-zero)  
@@ -64,7 +64,7 @@ Result line:
 - **Visual configuration**: `/token-meter-settings` opens a settings panel in the
   same style as pi's own `/settings`
 
-> [!NOTE] Limits
+> [!NOTE]
 > Numbers during streaming are estimates or incremental reports; the round
 > settlement is what counts (the settled value agrees with the provider bill
 > exactly)  
