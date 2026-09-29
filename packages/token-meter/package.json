@@ -1,0 +1,22 @@
+{
+	"name": "@hayston/pi-token-meter",
+	"version": "0.1.0",
+	"description": "Live token/cost meter for pi: a counter that grows next to the spinner and a per-round settlement line at the end of the transcript, with a settings panel.",
+	"keywords": ["pi-package", "pi-extension", "token-meter", "usage", "cost", "tui", "tokens"],
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Hayston1001/pi-extensions.git",
+		"directory": "packages/token-meter"
+	},
+	"files": ["src/index.ts", "src/config.ts", "src/i18n.ts", "src/meter.ts", "src/panel.ts", "src/render.ts", "README.md", "README_zh.md"],
+	"publishConfig": { "access": "public" },
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	}
+}
