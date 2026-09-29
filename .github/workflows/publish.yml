@@ -92,21 +92,50 @@ jobs:
 
       - name: install pi (the tests drive pi's own loader)
         if: steps.state.outputs.publish == 'true'
-        env:
-          # Only used when the registry's `latest` cannot be installed (its tarball
-          # has 404'd upstream before). Bump this when you bump your local pi.
-          FALLBACK_PI: "0.99.0"
         run: |
           set -euo pipefail
+          pkg="@earendil-works/pi-coding-agent"
+
           # Install globally: the harness expects pi-tui nested inside pi-coding-agent,
           # which is how global installs lay out; PI_PACKAGE_DIR points it at that copy.
-          if ! npm install -g --ignore-scripts @earendil-works/pi-coding-agent; then
-            echo "::warning::could not install the latest pi -- falling back to ${FALLBACK_PI}"
-            npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${FALLBACK_PI}"
+          # The registry's `latest` has pointed at a version whose tarball 404'd, so walk
+          # back from `latest` through the versions published before it until one installs.
+          # Read the raw packument rather than `npm view --json`: the JSON shape that
+          # command produces differs between npm versions (npm 12 wraps it in an array).
+          meta="$(curl -fsSL "https://registry.npmjs.org/${pkg//\//%2f}" | node -e '
+            let raw = "";
+            process.stdin.on("data", (d) => (raw += d)).on("end", () => {
+              const doc = JSON.parse(raw);
+              const latest = doc["dist-tags"].latest;
+              const times = doc.time ?? {};
+              const versions = Object.keys(times).filter((v) => /^\d+\.\d+\.\d+$/.test(v));
+              versions.sort((a, b) => Date.parse(times[b]) - Date.parse(times[a]));
+              const at = Math.max(versions.indexOf(latest), 0);
+              console.log(latest);
+              console.log(versions.slice(at, at + 5).join(" "));
+            });
+          ')"
+          latest="$(printf '%s\n' "$meta" | head -n 1)"
+          candidates="$(printf '%s\n' "$meta" | tail -n 1)"
+
+          installed=""
+          for version in $candidates; do
+            if npm install -g --ignore-scripts "$pkg@$version"; then
+              installed="$version"
+              break
+            fi
+            echo "::warning::${pkg}@${version} could not be installed -- trying the previous version"
+          done
+
+          if [ -z "$installed" ]; then
+            echo "::error::none of these ${pkg} versions could be installed: ${candidates}"
+            exit 1
           fi
-          echo "PI_PACKAGE_DIR=$(npm root -g)/@earendil-works/pi-coding-agent" >> "$GITHUB_ENV"
+          echo "pi ${installed} installed for this test run (latest is ${latest})"
+
+          echo "PI_PACKAGE_DIR=$(npm root -g)/${pkg}" >> "$GITHUB_ENV"
           # Log which pi the tests will run against (so a red run names the version).
-          npm ls -g @earendil-works/pi-coding-agent --depth=0 || true
+          npm ls -g "$pkg" --depth=0 || true
 
       - name: test
         if: steps.state.outputs.publish == 'true'
