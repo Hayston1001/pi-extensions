@@ -92,11 +92,18 @@ jobs:
 
       - name: install pi (the tests drive pi's own loader)
         if: steps.state.outputs.publish == 'true'
+        env:
+          # Only used when the registry's `latest` cannot be installed (its tarball
+          # has 404'd upstream before). Bump this when you bump your local pi.
+          FALLBACK_PI: "0.99.0"
         run: |
           set -euo pipefail
           # Install globally: the harness expects pi-tui nested inside pi-coding-agent,
           # which is how global installs lay out; PI_PACKAGE_DIR points it at that copy.
-          npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+          if ! npm install -g --ignore-scripts @earendil-works/pi-coding-agent; then
+            echo "::warning::could not install the latest pi -- falling back to ${FALLBACK_PI}"
+            npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${FALLBACK_PI}"
+          fi
           echo "PI_PACKAGE_DIR=$(npm root -g)/@earendil-works/pi-coding-agent" >> "$GITHUB_ENV"
           # Log which pi the tests will run against (so a red run names the version).
           npm ls -g @earendil-works/pi-coding-agent --depth=0 || true
