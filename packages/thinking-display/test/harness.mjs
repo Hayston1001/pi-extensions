@@ -4,7 +4,7 @@
  *  - 用与 pi 线上一致的 jiti + 别名加载扩展模块
  *  - 提供面板测试用的假 TUI / 上下文 / 主题
  */
-import { existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,8 +12,6 @@ import { createRequire } from "node:module";
 
 export const TEST_DIR = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
 export const EXT_DIR = dirname(TEST_DIR);
-/** 扩展的全部源文件(相对包目录):复制到隔离目录时一个都不能漏.  */
-export const EXT_FILES = ["src/index.ts", "src/config.ts"];
 
 // 必须在任何模块读配置之前设好:没有它, config.ts 的回退路径会落到用户真实的 ~/.pi/agent. 
 if (!process.env.PI_CODING_AGENT_DIR) {
@@ -94,13 +92,10 @@ export async function loadConfigModule(dir) {
 /** 把扩展复制到隔离目录(配置回退路径绝不能碰用户真实 ~/.pi/agent).  */
 export function copyExtensionTo(targetDir, from = EXT_DIR) {
 	mkdirSync(targetDir, { recursive: true });
-	// 源文件按相对路径复制(保留 src/); package.json 也带上, 让生命周期用例的 pi 发现链路
-	// 能读到 pi.extensions(指向 ./src/index.ts). 
-	for (const file of [...EXT_FILES, "package.json"]) {
-		const target = join(targetDir, file);
-		mkdirSync(dirname(target), { recursive: true });
-		copyFileSync(join(from, file), target);
-	}
+	// 整个 src/ 一起拷(源码只放这里), 不逐个列文件: 新加的模块不会漏; package.json 也带上,
+	// 让生命周期用例的 pi 发现链路能读到 pi.extensions(指向 ./src/index.ts).
+	cpSync(join(from, "src"), join(targetDir, "src"), { recursive: true });
+	copyFileSync(join(from, "package.json"), join(targetDir, "package.json"));
 	return targetDir;
 }
 

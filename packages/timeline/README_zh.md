@@ -39,6 +39,9 @@ pi -e npm:pi-timeline             # 一次性试用
 
 ## 配置文件
 
+> [!TIP]
+> 使用 `/timeline-settings` 命令打开可视化设置面板
+
 位于 `~/.pi/agent/timeline.json`
 
 | 键 | 类型 | 默认 | 说明 |

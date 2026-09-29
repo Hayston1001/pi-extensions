@@ -51,6 +51,9 @@ pi install -e npm:@hayston/pi-token-meter     # 一次性试用
 
 ## 配置文件
 
+> [!TIP]
+> 使用 `/token-meter-settings` 命令打开可视化设置面板
+
 位于 `~/.pi/agent/token-meter.json`
 
 **全局**

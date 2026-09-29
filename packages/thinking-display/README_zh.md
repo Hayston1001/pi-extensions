@@ -27,6 +27,9 @@ pi install -e npm:pi-thinking-display     # 一次性试用
 
 ## 配置文件
 
+> [!TIP]
+> 使用 `/thinking-display-settings` 命令打开可视化设置面板
+
 位于 `~/.pi/agent/thinking-display.json`
 
 | 键 | 类型 | 默认 | 说明 |

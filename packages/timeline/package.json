@@ -9,7 +9,7 @@
     "url": "git+https://github.com/Hayston1001/pi-extensions.git",
     "directory": "packages/timeline"
   },
-  "files": ["src/index.ts", "src/i18n.ts", "README.md", "README_zh.md"],
+  "files": ["src", "README.md", "README_zh.md"],
   "pi": {
     "extensions": ["./src/index.ts"]
   },

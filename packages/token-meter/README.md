@@ -82,6 +82,9 @@ pi install -e npm:@hayston/pi-token-meter     # one-shot trial
 
 ## Configuration file
 
+> [!TIP]
+> Use `/token-meter-settings` to open the visualization settings panel
+
 At `~/.pi/agent/token-meter.json`
 
 **Global**

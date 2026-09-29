@@ -4,7 +4,7 @@
  *  - 走 Pi 真实的扩展 loader 加载扩展(jiti + 别名, 和线上完全一致)
  *  - 假的 theme / keybindings / TUI / ctx, 用来驱动选择界面
  */
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -13,8 +13,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const TEST_DIR = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
 export const EXT_DIR = resolve(TEST_DIR, "..");
 export const EXT_ENTRY = join(EXT_DIR, "src", "index.ts");
-/** 扩展自己带的源文件(入口 + 它 import 的模块, 相对包目录); 复制到临时目录时要一并带上 */
-export const EXT_FILES = ["src/index.ts", "src/i18n.ts"];
 
 // ---------------------------------------------------------------------------
 // 找 pi 包
@@ -117,12 +115,8 @@ export async function loadTimeline({ copyTo, config, agentConfig, legacyConfig, 
 	process.env.PI_CODING_AGENT_DIR = agent;
 	let entry = EXT_ENTRY;
 	if (copyTo) {
-		mkdirSync(copyTo, { recursive: true });
-		for (const file of EXT_FILES) {
-			const target = join(copyTo, file);
-			mkdirSync(dirname(target), { recursive: true });
-			copyFileSync(join(EXT_DIR, file), target);
-		}
+		// 整个 src/ 一起拷, 不逐个列文件: 新加的模块不会漏(源码只放 src/)
+		cpSync(join(EXT_DIR, "src"), join(copyTo, "src"), { recursive: true });
 	}
 	// 测试一律固定界面语言, 别依赖运行机器的系统区域(写了 language 的除外)
 	for (const [where, text] of [[join(agent, "timeline.json"), config], [copyTo ? join(copyTo, "config.json") : undefined, legacyConfig]]) {

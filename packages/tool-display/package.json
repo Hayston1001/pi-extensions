@@ -9,7 +9,8 @@
     "url": "git+https://github.com/Hayston1001/pi-extensions.git",
     "directory": "packages/tool-display"
   },
-  "files": ["src/index.ts", "src/config.ts", "src/panel.ts", "src/render.ts", "src/state.ts", "README.md", "README_zh.md"],
+  "files": ["src", "README.md", "README_zh.md"],
+  "publishConfig": { "access": "public" },
   "pi": {
     "extensions": ["./src/index.ts"]
   },

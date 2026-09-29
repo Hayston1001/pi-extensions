@@ -34,6 +34,9 @@ pi install -e npm:@hayston/pi-tool-display   # one-shot trial
 
 ## Configuration file
 
+> [!TIP]
+> Use `/tool-display-settings` to open the visualization settings panel
+
 At `~/.pi/agent/tool-display.json`
 
 | Key | Type | Default | Meaning |

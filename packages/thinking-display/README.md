@@ -32,6 +32,9 @@ pi install -e npm:pi-thinking-display     # one-shot trial
 
 ## Configuration file
 
+> [!TIP]
+> Use `/thinking-display-settings` to open the visualization settings panel
+
 At `~/.pi/agent/thinking-display.json`
 
 | Key | Type | Default | Meaning |

@@ -41,6 +41,9 @@ pi -e npm:pi-timeline             # one-shot trial
 
 ## Configuration file
 
+> [!TIP]
+> Use `/timeline-settings` to open the visualization settings panel
+
 At `~/.pi/agent/timeline.json`
 
 | Key | Type | Default | Meaning |
