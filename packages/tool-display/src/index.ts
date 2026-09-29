@@ -1,24 +1,11 @@
 /**
  * tool-display -- 工具调用展示密度可配置(mini / low / medium / default). 
  *
- * 档位(配置文件 ~/.pi/agent/tool-display.json 的 display 字段, 或 /tool-display-settings 面板):
- *   mini:    整批工具调用汇总一行 "✓ 5 tools"(有失败 ✕,运行中 ⋯ n/m tools, 前缀 + / -),
- *            点击展开;同批其余行折叠成零高度
- *   low:     同 mini 的一行汇总, 但报的是具体调用了哪些工具(如 "✓ ls, grep",
- *            超出 nameLimit 收成 +N), 同样点击展开/收起
- *   medium:  原版调用行 + 一行摘要(条目数 / 耗时 / timeout);输出不显示, 失败给错误摘要
- *   default: 完全原版
- *
- * mini/low 整批显示时每条调用的形态由 config.expandStyle 决定: "medium"(默认, 调用行 + 摘要,
- * 不显示输出)或 "default"(原版带输出预览, 受原版行数上限限制); 点单条可翻成完整输出. 
- *
  * 实现方式:用 create*ToolDefinition() 取到完整内建定义后展开,只覆盖渲染槽位,
  * execute 委托回内建实现并原样透传 ctx. 因此 description / parameters /
  * promptSnippet / promptGuidelines / constrainedSampling / prepareArguments /
  * renderShell(这里统一改成 "self",外壳自己画)/ 执行行为全部可控且与内建一致,
  * 模型看到的工具描述与系统提示词不变. 
- *
- * 只处理内建工具;扩展工具与 MCP 工具不受影响. 删除本文件夹即可还原. 
  *
  * 注意:只在 session_start 时给"当前真正启用的内建工具"注册覆盖,因此尊重
  * settings.json 的 defaultTools 以及 --tools / --exclude-tools / --no-builtin-tools. 

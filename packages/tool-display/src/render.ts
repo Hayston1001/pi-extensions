@@ -1,30 +1,14 @@
 /**
- * 四档渲染.
+ * 四档渲染
  *
  * 所有工具统一用 renderShell: "self",外壳自己画:
  *   - mini/low 折叠态画单行汇总(空行组件渲染为零高度, 同批其余行整个消失)
  *   - 其余形态复刻原版外壳: Box(1, 1, 状态背景) 包住内建 renderCall/renderResult
  *     -- 与 pi 默认壳同一个组件类,视觉一致(edit 自带外壳则直接用内建组件)
  *
- * 状态表达: mini/low 汇总行用 ✓/✕/⋯ 符号;其余形态沿用原版的状态背景
- * (toolSuccessBg / toolPendingBg / toolErrorBg).
- *
- * 折叠形态:
- *   - mini: 整批一行 "✓ N tools"(-- 只报数量)
- *   - low:  整批一行 "✓ 工具名列表"(-- 报具体调用了哪些工具, 超出上限收成 +N)
- *   - medium: 每个调用一个原版调用行, 输出不显示, 但给一行摘要(条目数 / 耗时 / timeout)
- *   - default: 原版(折叠态是 pi 自己的输出预览, 有行数上限)
- *
- * 展开形态:
- *   - medium: 展开 = 原版全量(和 default 的展开一样)
- *   - default: 原版语义(展开 = 全量)
- *   - mini/low: 点汇总行把整批显示出来, 每条调用按 config.expandStyle 呈现:
- *     "medium" = 调用行 + 摘要(不显示输出), "default" = 原版折叠态(带输出, 受原版行数上限限制);
- *     点单条在这形态与完整输出之间翻. Ctrl+O 全局展开同样适用. 
- *
- * 点击由本扩展的鼠标区域接管: 汇总行 = 切换整批, 调用内容 = 切换该条.
- * 这样 "整批展开" 与 "单条展开" 是两层独立状态, 才能既整批看又逐条钻.
- * pi 的 context.expanded 只在 Ctrl+O 这类全局展开时才为真, 作为 "强制全展" 叠加.
+ * 点击由本扩展的鼠标区域接管: 汇总行 = 切换整批, 调用内容 = 切换该条
+ * pi 的 context.expanded 只在 Ctrl+O 这类全局展开时才为真, 作为 "强制全展" 叠加
+ * 
  */
 import type { Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, MouseRegion, Text, type Component } from "@earendil-works/pi-tui";

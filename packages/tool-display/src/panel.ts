@@ -1,14 +1,5 @@
 /**
  * tool-display · 可视化设置面板
- *
- * `/tool-display-settings` 唤起. 样式与 pi 原生 /settings 一致:
- * 上下 DynamicBorder 分隔线 + SettingsList(原生列表主题, 自带搜索与按键提示).
- * 面板顶部是标题(缩进 2), 底部是配置文件路径(同样缩进 2), 中间是原生列表 + 搜索.
- * 命令入口按能力分派(见 index.ts): TUI 开这里的面板; 有 UI 但没自定义组件(RPC)走
- * openSettingsDialog; 完全没有界面(json / print)走 statusText.
- *
- * 文案: 本包已确认不做多语言(保持英文硬编码), 所以面板/对话框/状态提示直接用英文,
- * 不引 i18n 表. 设置项只有一张表(MENU), 面板与降级对话框共用.
  */
 
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";

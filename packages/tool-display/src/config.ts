@@ -1,9 +1,5 @@
 /**
  * tool-display 的配置文件读写. 
- *
- * 配置只有一个位置: `~/.pi/agent/tool-display.json`(包目录升级时会被整体替换, 所以不放包里). 
- * 包目录里早期那份 `config.json` 只当旧位置读一次, 读到就搬到新位置并删掉旧文件. 
- * 缺文件 / 坏 JSON / 缺字段都退回默认值, 不影响渲染;设置命令修改后写回(2 空格 + patch, 保留手写的其它字段). 
  */
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
