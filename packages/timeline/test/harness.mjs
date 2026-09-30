@@ -126,7 +126,11 @@ export async function loadTimeline({ copyTo, config, agentConfig, legacyConfig, 
 			if (parsed.language === undefined) parsed.language = "zh";
 			writeFileSync(where, JSON.stringify(parsed), "utf8");
 		} catch {
+			// 这份配置是故意写坏的(用来测解析失败的告警), `language` 字段塞不进去, 
+			// 只能拿区域变量把语言钉住--否则文案跟着运行机器(CI 上是 en)的区域走, 断言时好时坏. 
+			// 这是进程级的: 后面要用别的语言, 自己覆盖环境变量.
 			writeFileSync(where, text, "utf8");
+			process.env.LC_ALL = "zh_CN.UTF-8";
 		}
 	}
 	if (copyTo) entry = join(copyTo, "src", "index.ts");
