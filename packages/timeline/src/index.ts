@@ -412,7 +412,7 @@ interface MessageRecord {
 	landmark: boolean;
 	/** 助手块里带不带思考: 带思考就跳过思考落正文, 不带就落块首(= pi 原生) */
 	hasThinking?: boolean;
-	/** 正文文字第一行在块内的偏移(带思考的块才用得上) */
+	/** 正文起点在块内的偏移, 含紧邻正文的一行空白(带思考的块才用得上) */
 	textOffset?: number;
 }
 
@@ -748,8 +748,9 @@ function hasTextSource(value: any, parts: string[], depth = 0): boolean {
 }
 
 /**
- * 带思考的助手块里"正文文字"的起点(块内偏移行数). 
+ * 带思考的助手块里正文的起点(块内偏移行数), 保留正文前紧邻的一行空白.
  * 认正文先按内容(源文本 == 消息里的 text 段), 认不出再按形状(第一个不是思考块的可见块). 
+ * 只在前一行确实为空时向前一行, 不硬减偏移, 避免把思考末行带回视口.
  */
 function assistantBodyOffset(component: any, width: number): number | undefined {
 	const children: any[] | undefined = component?.contentContainer?.children;
@@ -757,10 +758,13 @@ function assistantBodyOffset(component: any, width: number): number | undefined 
 	const parts = assistantTextParts(component?.lastMessage);
 	const entries: Array<{ child: any; offset: number; visible: boolean }> = [];
 	let offset = 0;
+	let previousLine: string | undefined;
 	for (const child of children) {
 		const lines: string[] = typeof child?.render === "function" ? child.render(width) : [];
-		entries.push({ child, offset, visible: lines.some((line) => stripAnsi(line).trim().length > 0) });
+		const anchor = offset > 0 && previousLine !== undefined && stripAnsi(previousLine).trim() === "" ? offset - 1 : offset;
+		entries.push({ child, offset: anchor, visible: lines.some((line) => stripAnsi(line).trim().length > 0) });
 		offset += lines.length;
+		if (lines.length > 0) previousLine = lines[lines.length - 1];
 	}
 	for (const entry of entries) {
 		if (entry.visible && hasTextSource(entry.child, parts)) return entry.offset;
@@ -776,8 +780,8 @@ function assistantBodyOffset(component: any, width: number): number | undefined 
  *
  * - 纯文本回复: **块的第一行**--和 pi 原生 `Ctrl+↑/↓`(`scrollToPrompt`)逐行一致(它认的
  *   就是行首带 OSC 133 块标记的那行, 也就是块首的上边距). 
- * - 回复块里**带思考**: 跳过思考, 落**正文文字第一行**--不然几十行思考顶在视口上, 
- *   正文被推出屏幕(踩过: #5 那种). 
+ * - 回复块里**带思考**: 跳过思考, 保留正文前紧邻的一行空白(没有空行就落正文).
+ *   既不让几十行思考把正文推出屏幕, 也不让正文贴在视口最上沿.
  */
 function anchoredRow(record: MessageRecord | undefined): number | undefined {
 	if (!record) return undefined;
@@ -841,7 +845,7 @@ function locateRows(items: TimelineItem[], tui: any, view: ScrollViewLike, jumpT
 		if (located.some((item) => item !== undefined)) {
 			const rows = located.map((item) => {
 				if (!item) return undefined;
-				// 落脚行 = 块的第一行(和 pi 原生 Ctrl+↑/↓ 认的那行一致)
+				// 纯文本落块首; 带思考时落正文, 保留正文前的一行空白.
 				return anchoredRow(pickAnchorRecord(item, collected.records, jumpTo));
 			});
 			const blockRows = located.map((item) => (item ? collected.records[item.index].row : undefined));

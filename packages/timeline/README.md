@@ -27,10 +27,12 @@ transcript viewport precisely to the one you pick.
 > [!NOTE] Jump target
 > `user` the user message itself  
 > `reply` the final answer
+>
+> Plain-text replies use the same block start as native `Ctrl+↑/↓`. Replies with
+> thinking skip it and keep one blank line immediately before the answer, if present.
 
 > [!WARNING]
-> Invalid shortcuts are rejected. Without a modifier, only named keys (such as
-> `f2`) are accepted.
+> Invalid shortcuts are rejected. Without a modifier, only named keys (such as`f2`) are accepted.
 
 ## Install
 

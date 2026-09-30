@@ -200,6 +200,38 @@ export async function run() {
 		return rows;
 	};
 
+	await suite.test("reply 跳过思考: 只保留紧邻正文的一行空白, 没空白时不回退", async () => {
+		const work2 = tempDir("unit-reply-spacing");
+		const loadReply = await loadTimeline({ copyTo: join(work2.dir, "ext"), config: '{"shortcut":"alt+g","jumpTo":"reply"}' });
+		const { user, assistant, textLine, document } = fakeMessageComponents();
+		for (const gap of [[], [""], ["", "", ""], ["\x1b[2m  \x1b[0m"]]) {
+			const reply = assistant("正文回答");
+			reply.lastMessage.content.unshift({ type: "thinking", thinking: "思考末行" });
+			const body = { text: "正文回答", render: () => ["正文回答"] };
+			reply.contentContainer = document([
+				textLine(MARK),
+				{ child: textLine("思考末行"), onMouse() {}, render: () => ["思考末行"] },
+				{ render: () => gap },
+				{ render: () => [] }, // 零高度包装不应丢掉前一行的信息
+				body,
+			]);
+			reply.render = (width) => reply.contentContainer.render(width);
+			const doc = document([user("问题"), reply]);
+			const lines = doc.render(100);
+			const textRow = lines.indexOf("正文回答");
+			const { tui, calls } = makeFakeTui(lines, { document: doc });
+			const { notifications } = await drivePicker({
+				load: loadReply, tui,
+				entries: [userEntry("u1", "问题", 0), assistantEntry("a1", "正文回答", 1)],
+				inputs: [KEY.enter],
+			});
+			assert.deepEqual(notifications, []);
+			assert.equal(calls[0].row, textRow - (gap.length > 0 ? 1 : 0), JSON.stringify(gap));
+			assert.notEqual(lines[calls[0].row], "思考末行");
+		}
+		work2.cleanup();
+	});
+
 	await suite.test("重复发同一句话: 每条都跳到它自己的那一块(不串位)", async () => {
 		const { user, assistant, document } = fakeMessageComponents();
 		const parts = [user("继续"), assistant("答一"), user("继续"), assistant("答二"), user("继续"), assistant("答三")];

@@ -6,6 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import {
 	CHAT_VIEWPORT_URL,
 	KEY,
@@ -590,7 +591,7 @@ export async function run() {
 		}
 	});
 
-	await suite.test("端到端: 带思考的回复跳过思考, 落正文第一行", async () => {
+	await suite.test("端到端: 带思考的回复跳过思考, 保留正文前一行空白", async () => {
 		// 真实会话里助手先想一大段再说答案; 跳到"正文"要落在文字上, 不能落在思考上
 		const chat = new Container();
 		chat.addChild(new Text("Pi · 头部"));
@@ -631,8 +632,9 @@ export async function run() {
 		viewport.transcript.scrollTo(0, { disableFollow: true }); // 从头开始选: 光标预选会跟着视口位置走
 		const { notifications } = await drivePicker({ load: loadReply, tui: screen, entries: replyEntries, inputs: [KEY.enter] });
 		assert.deepEqual(notifications, []);
-		assert.equal(viewport.transcript.scrollTop, textRow, `带思考的回复应跳过思考落在正文第一行(第 ${textRow} 行), 实际第 ${viewport.transcript.scrollTop} 行`);
-		assert.match(lines[viewport.transcript.scrollTop], /这才是回答正文/);
+		assert.equal(viewport.transcript.scrollTop, textRow - 1, `带思考的回复应保留正文前一行空白, 实际第 ${viewport.transcript.scrollTop} 行`);
+		assert.equal(stripVTControlCharacters(lines[viewport.transcript.scrollTop]).trim(), "");
+		assert.match(lines[viewport.transcript.scrollTop + 1], /这才是回答正文/);
 		work2.cleanup();
 	});
 
@@ -687,9 +689,10 @@ export async function run() {
 			assert.deepEqual(notifications, [], `${label}: 不该有提示`);
 			assert.equal(
 				viewport.transcript.scrollTop,
-				textRow,
-				`${label}: reply 应当落在正文第一行(第 ${textRow} 行), 实际第 ${viewport.transcript.scrollTop} 行`,
+				textRow - 1,
+				`${label}: reply 应保留正文前一行空白, 实际第 ${viewport.transcript.scrollTop} 行`,
 			);
+			assert.equal(stripVTControlCharacters(lines[viewport.transcript.scrollTop]).trim(), "", label);
 			work3.cleanup();
 		}
 	});
@@ -743,9 +746,10 @@ export async function run() {
 			assert.deepEqual(notifications, [], `${label}: 不该有提示`);
 			assert.equal(
 				viewport.transcript.scrollTop,
-				textRow,
-				`${label}: reply 应当落在正文第一行(第 ${textRow} 行), 实际第 ${viewport.transcript.scrollTop} 行`,
+				textRow - 1,
+				`${label}: reply 应保留正文前一行空白, 实际第 ${viewport.transcript.scrollTop} 行`,
 			);
+			assert.equal(stripVTControlCharacters(lines[viewport.transcript.scrollTop]).trim(), "", label);
 			work4.cleanup();
 		}
 	});
@@ -804,8 +808,8 @@ export async function run() {
 		assert.deepEqual(notifications, []);
 		assert.equal(
 			viewport.transcript.scrollTop,
-			textRow,
-			`布局状态旧一拍时 reply 仍应落在正文第一行(第 ${textRow} 行), 实际第 ${viewport.transcript.scrollTop} 行`,
+			textRow - 1,
+			`布局状态旧一拍时 reply 仍应保留正文前一行空白, 实际第 ${viewport.transcript.scrollTop} 行`,
 		);
 		work5.cleanup();
 	});
