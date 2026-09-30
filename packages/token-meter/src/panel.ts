@@ -13,12 +13,15 @@ import type { AnimationMode, TokenMeterConfig } from "./config.ts";
 import { ANIMATION_MODES, REFRESH_MS_CHOICES, configPath, saveConfig, shortenHomePath, snapRefreshMs } from "./config.ts";
 import { LANGUAGES, messages, type Language, type Messages, type SettingId } from "./i18n.ts";
 
-/** 动态行 / 结算行两组的显示项 */
+/**
+ * 动态行 / 结算行两组的显示项. 
+ * 顺序 = 这两行上项目从左到右的实际顺序
+ */
 type Line = "live" | "result";
 
 const LINE_IDS: Record<Line, SettingId[]> = {
-	live: ["liveShowArrows", "liveShowCache", "liveShowCost", "liveShowTps", "liveShowDuration", "liveShowModel", "liveShowThinking"],
-	result: ["showArrows", "showCache", "showCost", "showTps", "showDuration", "showModel", "showThinking"],
+	live: ["liveShowDuration", "liveShowArrows", "liveShowCache", "liveShowTps", "liveShowModel", "liveShowThinking", "liveShowCost"],
+	result: ["showDuration", "showArrows", "showCache", "showTps", "showModel", "showThinking", "showCost"],
 };
 
 interface SettingDef {
@@ -232,7 +235,7 @@ interface PanelDeps {
 	onApplied: () => void;
 }
 
-/** 一行显示项的子菜单: 箭头 / 缓存 / 预估金额 / 速度 / 耗时 / 模型 / 思考强度, 七项互相独立 */
+/** 一行显示项的子菜单 */
 function buildLineSubmenu(
 	cfg: TokenMeterConfig,
 	m: Messages,

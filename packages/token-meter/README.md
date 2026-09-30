@@ -11,13 +11,13 @@ context).
 Live line (next to the spinner):
 
 ```
-── ⠋ ↓1.2k 45tok/s 12s ──────────────────────────
+── ⠋ 12s · ↓1.2k 45tok/s ──────────────────────────
 ```
 
 Result line:
 
 ```
-↑286k ↓1.2k R13.4M W1.2M 57tok/s 3m32s · claude-opus-5 (high) $20.16
+3m32s · ↑286k ↓1.2k R13.4M W1.2M 57tok/s · claude-opus-5 (high) $20.16
 ```
 
 > [!TIP]
@@ -35,25 +35,18 @@ Result line:
 > is sent until the round settles  
 > `estimates` a usage report the provider sends while streaming is taken as-is.
 > Before it reports, the input side is split into input / cache read by "context
-> size − last cached prefix", and the output side is estimated from what has
-> been generated so far (CJK ≈ 0.9 token/char, otherwise ≈ 4 chars/token, +40
-> structural overhead per tool call; calibrated against real provider usage,
-> average error ≈ 10%). After `message_end` the provider's final numbers always
-> overwrite the estimates, so the result line is the final accounting and agrees
-> with the bill exactly
+> size − last cached prefix"
 
 ### Features
 
-- **Live counters**: ↑ input / ↓ output / R/W cache / $ cost / speed / duration,
+- **Live counters**: duration / ↑ input / ↓ output / R/W cache / speed / $ cost,
   growing in real time
-- **Arrow animation presets**: **Steady** (the arrow of the counter that is
-  growing lights up, otherwise grey), **Blink** (the growing arrow blinks per
-  frame), **Merge** (the default; both counters merge into one slot that shows
-  only the side that is changing)
-- **Wait timer**: after a message is sent, the round's timer is appended to pi's
-  working line (`Working 12s`), and is replaced by the full live line as soon as
-  the model starts answering; with "show duration" off, the wait timer is hidden
-  too
+- **Arrow animation presets**: **Steady** (the changing numbers are
+  highlighted), **Blink** (the changing numbers blink per frame), **Merge**
+  (only the changing side is shown)
+- **Wait timer**: after a message is sent, the round's timer is appended after
+  pi's working line (`Working 1s`), and is replaced by the full live line as
+  soon as the model starts answering
 - **Round settlement**: one round = from sending the message to fully settling
   (automatic retries / compaction continuations / queued messages included).
   Once it ends, one line is written at the end of the transcript
@@ -101,25 +94,25 @@ At `~/.pi/agent/token-meter.json`
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
+| `liveShowDuration` | boolean | `true` | Full duration of the round |
 | `liveShowArrows` | boolean | `true` | ↑↓ |
 | `liveShowCache` | boolean | `false` | Cache read / cache write |
-| `liveShowCost` | boolean | `false` | Estimated cost |
 | `liveShowTps` | boolean | `true` | Speed (tok/s) |
-| `liveShowDuration` | boolean | `true` | Full duration of the round |
 | `liveShowModel` | boolean | `false` | Model ID |
 | `liveShowThinking` | boolean | `false` | Thinking level |
+| `liveShowCost` | boolean | `false` | Estimated cost |
 
 **Result line fields** (submenu)
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
+| `showDuration` | boolean | `true` | Duration of the round |
 | `showArrows` | boolean | `true` | ↑↓ |
 | `showCache` | boolean | `true` | Cache read / cache write |
-| `showCost` | boolean | `true` | Estimated cost |
 | `showTps` | boolean | `true` | Speed (tok/s) |
-| `showDuration` | boolean | `true` | Duration of the round |
 | `showModel` | boolean | `true` | Model ID |
 | `showThinking` | boolean | `true` | Thinking level |
+| `showCost` | boolean | `true` | Estimated cost |
 
 > [!WARNING]
 > Missing fields, wrong types and broken JSON all fall back to the defaults, and

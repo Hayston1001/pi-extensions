@@ -64,10 +64,9 @@ export default function tokenMeter(pi: ExtensionAPI) {
 			if (ctx.mode === "tui") {
 				if (cfg.liveShowDuration) {
 					// working 文案的颜色是"思考强度边框色"(跟编辑器边框同色, 随思考强度变), 
-					// 所以前缀用同一个上色函数, 计时自己套 muted -- 与动态行里耗时的颜色一致. 
+					// 计时套同一个上色函数 -- 与动态行里耗时同色, 都跟随输入框. 
 					const border = ctx.ui.theme.getThinkingBorderColor(pi.getThinkingLevel());
-					const timer = ctx.ui.theme.fg("muted", formatDuration(meter.elapsedMs()));
-					ctx.ui.setWorkingMessage(`${border(PI_WORKING_MESSAGE)} ${timer}`);
+					ctx.ui.setWorkingMessage(`${border(PI_WORKING_MESSAGE)} ${border(formatDuration(meter.elapsedMs()))}`);
 				} else {
 					ctx.ui.setWorkingMessage(undefined);
 				}
@@ -82,6 +81,8 @@ export default function tokenMeter(pi: ExtensionAPI) {
 			totals,
 			model: info?.model.id,
 			thinkingLevel: info?.thinkingLevel,
+			// 耗时的颜色跟 pi 输入框边框走, 所以取当前的思考强度(不是本轮消息记录的那个)
+			inputLevel: pi.getThinkingLevel(),
 		});
 		// 工作行(spinner 旁)是主展示位; RPC 等无工作行的模式用状态条兜底
 		if (ctx.mode === "tui") ctx.ui.setWorkingMessage(line);

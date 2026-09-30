@@ -117,11 +117,11 @@ const ZH: Messages = {
 		},
 		liveDisplay: {
 			label: "动态行显示项",
-			description: "动态行的显示内容: 箭头 / 缓存 / 金额 / 速度 / 耗时 / 模型 / 思考强度, 回车进入",
+			description: "动态行的显示内容: 耗时 / 箭头 / 缓存 / 速度 / 模型 / 思考强度 / 金额(与行上从左到右一致), 回车进入",
 		},
 		resultDisplay: {
 			label: "结算行显示项",
-			description: "结算行的显示内容: 箭头 / 缓存 / 金额 / 速度 / 耗时 / 模型 / 思考强度, 回车进入",
+			description: "结算行的显示内容: 耗时 / 箭头 / 缓存 / 速度 / 模型 / 思考强度 / 金额(与行上从左到右一致), 回车进入",
 		},
 		resultInTranscript: {
 			label: "结算行显示",
@@ -179,11 +179,11 @@ const EN: Messages = {
 		},
 		liveDisplay: {
 			label: "Live line fields",
-			description: "What the live line shows: arrows / cache / cost / speed / duration / model / thinking. Enter to open",
+			description: "What the live line shows: duration / arrows / cache / speed / model / thinking / cost (the order on the line). Enter to open",
 		},
 		resultDisplay: {
 			label: "Result line fields",
-			description: "What the end-of-round line shows: arrows / cache / cost / speed / duration / model / thinking. Enter to open",
+			description: "What the end-of-round line shows: duration / arrows / cache / speed / model / thinking / cost (the order on the line). Enter to open",
 		},
 		resultInTranscript: {
 			label: "Result line",

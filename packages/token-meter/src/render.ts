@@ -67,6 +67,9 @@ export function formatCache(t: Totals): string | undefined {
 
 type Side = "input" | "output";
 
+/** pi 输入框边框色接受的思考强度取值(从主题接口取) */
+type ThinkingLevel = Parameters<Theme["getThinkingBorderColor"]>[0];
+
 export interface LiveInfo {
 	tps: number;
 	/** 本轮已耗时(毫秒): 用户发出消息到现在的墙钟时间 */
@@ -74,14 +77,20 @@ export interface LiveInfo {
 	totals: Totals;
 	/** 当前模型 ID(动态行显示模型时用) */
 	model?: string;
+	/** 本条消息的思考强度(信息区的 `(level)` 标签用) */
 	thinkingLevel?: string;
+	/**
+	 * pi 输入框边框跟随的思考强度(当前值): 耗时的颜色与输入框边框同色, 所以取这一路.
+	 * 与上面的 `thinkingLevel` 是两回事 -- 用户中途改了思考强度时, 标签仍记本轮用的那个. 
+	 */
+	inputLevel?: ThinkingLevel;
 }
 
 /**
  * 动态计数器: 显示值向目标值做指数逼近, 形成"数字跳跃增长"的效果.
- * - 常亮(steady): ↑↓ 都在; 哪个数字在变化, 哪个箭头亮, 否则灰色
- * - 闪烁(blink): 同上, 但变化中的箭头按帧闪烁
- * - 合并(merge): 两路合并成一个槽位, 只显示最近正在变化的那一路
+ * - 常亮(steady): ↑↓ 都在; 变化的高亮
+ * - 闪烁(blink): 同上, 但按帧闪烁
+ * - 合并(merge): 两路合并成一个正在变化的
  */
 export class LiveCounter {
 	private dispInput = 0;
@@ -127,40 +136,54 @@ export class LiveCounter {
 		return dIn > 0 || dOut > 0 || this.dispCost !== prevCost;
 	}
 
-	/** 渲染动态行(两部分: 计数区 · 信息区), 例如: ↑452 ↓246 R589k 57tok/s 42s · mimo-v2.6-pro (high) $0.0025 */
+	/** 渲染动态行: 耗时 · 计数(箭头/缓存/速度) · 信息(模型/思考强度/金额), 例: 42s · ↑452 ↓246 R589k 57tok/s · model (high) $0.0025 */
 	render(theme: Theme, cfg: TokenMeterConfig, info: LiveInfo): string {
 		const mode = cfg.animation;
-		const head: string[] = [];
+		// 三部分各装各的: 某一段空着就连它那个圆点一起去掉
+		const duration: string[] = [];
+		const counters: string[] = [];
+		const tail: string[] = [];
 
 		const arrowText = (side: Side): string => {
 			const ch = side === "input" ? "↑" : "↓";
 			const grew = side === "input" ? this.grewInput : this.grewOutput;
 			const value = side === "input" ? this.dispInput : this.dispOutput;
-			let color: "accent" | "muted" = "muted";
-			if (grew) color = mode === "blink" && this.phase === 1 ? "muted" : "accent";
-			// 数字与箭头同色: 亮起时变绿, 否则同灰. 箭头与数字之间不留空格
+			let color: "text" | "muted" = "muted";
+			if (grew) color = mode === "blink" && this.phase === 1 ? "muted" : "text";
+			// 数字与箭头同色: 变化中 = pi 的原生正文色, 否则同灰. 箭头与数字之间不留空格
 			return `${theme.fg(color, ch)}${theme.fg(color, formatTokens(value))}`;
 		};
 
+		// 耗时单独一段排第一: 颜色取 pi 输入框的边框色(即思考强度色), 随思考强度与主题变
+		if (cfg.liveShowDuration && info.elapsedMs > 0) {
+			duration.push(theme.getThinkingBorderColor(info.inputLevel ?? "off")(formatDuration(info.elapsedMs)));
+		}
 		if (cfg.liveShowArrows) {
 			if (mode === "merge") {
-				head.push(arrowText(this.lastSide));
+				counters.push(arrowText(this.lastSide));
 			} else {
-				head.push(arrowText("input"), arrowText("output"));
+				counters.push(arrowText("input"), arrowText("output"));
 			}
 		}
 		const cache = formatCache(info.totals);
-		if (cache && cfg.liveShowCache) head.push(theme.fg("muted", cache));
-		if (cfg.liveShowTps && info.tps > 0) head.push(theme.fg("muted", formatTps(info.tps)));
-		if (cfg.liveShowDuration && info.elapsedMs > 0) head.push(theme.fg("muted", formatDuration(info.elapsedMs)));
-		const tail: string[] = [];
+		if (cache && cfg.liveShowCache) counters.push(theme.fg("muted", cache));
+		if (cfg.liveShowTps && info.tps > 0) counters.push(theme.fg("muted", formatTps(info.tps)));
 		const label = composeLabel(cfg.liveShowModel, cfg.liveShowThinking, info.model, info.thinkingLevel);
 		if (label) tail.push(theme.fg("muted", label));
 		if (cfg.liveShowCost) tail.push(theme.fg("muted", formatCost(this.dispCost)));
-		if (tail.length === 0) return head.join(" ");
-		if (head.length === 0) return tail.join(" ");
-		return `${head.join(" ")} ${theme.fg("muted", "·")} ${tail.join(" ")}`;
+		return joinSegments(theme, duration, counters, tail);
 	}
+}
+
+/**
+ * 把几段拼成一行, 段与段之间一个灰色的圆点; 空段直接跳过(圆点也跟着少). 
+ * 动态行与结算行都是"耗时 · 计数 · 信息"三段. 
+ */
+function joinSegments(theme: Theme, ...segments: string[][]): string {
+	return segments
+		.filter((segment) => segment.length > 0)
+		.map((segment) => segment.join(" "))
+		.join(` ${theme.fg("muted", "·")} `);
 }
 
 function approach(current: number, target: number): number {
@@ -179,30 +202,29 @@ function composeLabel(showModel: boolean, showThinking: boolean, model: string |
 }
 
 /**
- * 结算行(两部分: 计数区 · 信息区, 写入对话末尾).
- * 静态记录不鹤立: 一律灰色.
+ * 结算行(耗时 · 计数区 · 信息区, 写入对话末尾).
+ * 分段与顺序都与动态行一致; 静态记录不鹤立: 一律灰色.
  */
 export function buildResultLine(summary: RoundSummary, cfg: TokenMeterConfig, theme: Theme): string {
 	const m = messages(cfg.language);
 	const t = summary.totals;
-	const head: string[] = [];
+	const duration: string[] = [];
+	const counters: string[] = [];
+	const tail: string[] = [];
+	if (cfg.showDuration && summary.durationMs > 0) duration.push(theme.fg("muted", formatDuration(summary.durationMs)));
 	if (cfg.showArrows) {
-		head.push(
+		counters.push(
 			`${theme.fg("muted", "↑")}${theme.fg("muted", formatTokens(t.input))}`,
 			`${theme.fg("muted", "↓")}${theme.fg("muted", formatTokens(t.output))}`,
 		);
 	}
 	const cache = formatCache(t);
-	if (cache && cfg.showCache) head.push(theme.fg("muted", cache));
-	if (cfg.showTps && summary.tps > 0) head.push(theme.fg("muted", formatTps(summary.tps)));
-	if (cfg.showDuration && summary.durationMs > 0) head.push(theme.fg("muted", formatDuration(summary.durationMs)));
-	const tail: string[] = [];
+	if (cache && cfg.showCache) counters.push(theme.fg("muted", cache));
+	if (cfg.showTps && summary.tps > 0) counters.push(theme.fg("muted", formatTps(summary.tps)));
 	const level = summary.thinkingLevels.length ? summary.thinkingLevels.join("→") : undefined;
 	const model = summary.models.length ? formatModels(summary, m.unknownModel) : undefined;
 	const label = composeLabel(cfg.showModel, cfg.showThinking, model, level);
 	if (label) tail.push(theme.fg("muted", label));
 	if (cfg.showCost) tail.push(theme.fg("muted", formatCost(t.cost)));
-	if (tail.length === 0) return head.join(" ");
-	if (head.length === 0) return tail.join(" ");
-	return `${head.join(" ")} ${theme.fg("muted", "·")} ${tail.join(" ")}`;
+	return joinSegments(theme, duration, counters, tail);
 }

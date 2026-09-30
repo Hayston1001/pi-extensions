@@ -401,8 +401,8 @@ export async function run() {
 		const cfgEn = { ...config.defaultConfig(), language: "en" };
 		const line = render.buildResultLine(roundSummary, cfgEn, plainTheme());
 		check(
-			"结算行 = 计数区 · 信息区(箭头与数字间无空格, 耗时跟在速度后)",
-			line === "↑286k ↓1.2k R13.4M 57tok/s 3m32s · mimo (high) $0.0025",
+			"结算行 = 耗时 · 计数区 · 信息区(箭头与数字间无空格, 耗时单独一段)",
+			line === "3m32s · ↑286k ↓1.2k R13.4M 57tok/s · mimo (high) $0.0025",
 			line,
 		);
 		check(
@@ -412,8 +412,8 @@ export async function run() {
 		);
 		check(
 			"结算行的箭头与缓存是独立开关",
-			render.buildResultLine(roundSummary, { ...cfgEn, showArrows: false }, plainTheme()) === "R13.4M 57tok/s 3m32s · mimo (high) $0.0025" &&
-				render.buildResultLine(roundSummary, { ...cfgEn, showCache: false }, plainTheme()) === "↑286k ↓1.2k 57tok/s 3m32s · mimo (high) $0.0025",
+			render.buildResultLine(roundSummary, { ...cfgEn, showArrows: false }, plainTheme()) === "3m32s · R13.4M 57tok/s · mimo (high) $0.0025" &&
+				render.buildResultLine(roundSummary, { ...cfgEn, showCache: false }, plainTheme()) === "3m32s · ↑286k ↓1.2k 57tok/s · mimo (high) $0.0025",
 			`${render.buildResultLine(roundSummary, { ...cfgEn, showArrows: false }, plainTheme())} | ${render.buildResultLine(roundSummary, { ...cfgEn, showCache: false }, plainTheme())}`,
 		);
 		check(
@@ -423,8 +423,8 @@ export async function run() {
 		check("关掉金额后没有 $", !render.buildResultLine(roundSummary, { ...cfgEn, showCost: false }, plainTheme()).includes("$"));
 		check("关掉速度后没有 tok/s", !render.buildResultLine(roundSummary, { ...cfgEn, showTps: false }, plainTheme()).includes("tok/s"));
 		check(
-			"信息区全关时连分隔符一起去掉",
-			!render.buildResultLine(roundSummary, { ...cfgEn, showModel: false, showThinking: false, showCost: false }, plainTheme()).includes("·"),
+			"结算行的圆点只出现在非空段之间(信息区全关就只剩耗时与计数之间那一个)",
+			(render.buildResultLine(roundSummary, { ...cfgEn, showModel: false, showThinking: false, showCost: false }, plainTheme()).match(/·/g) ?? []).length === 1,
 		);
 		check(
 			"模型未知时的占位按语言",
@@ -455,7 +455,7 @@ export async function run() {
 		counter.reset();
 		counter.tick(totals(50));
 		const growing = counter.render(rec, liveCfg, info(totals(50)));
-		check("增长中的一路提亮(accent)", growing.includes("[accent]↑"), growing);
+		check("增长中的一路变白(text)", growing.includes("[text]↑"), growing);
 		check("没变化的一路保持灰色(muted)", growing.includes("[muted]↓"), growing);
 		counter.reset();
 		while (counter.tick(totals(50))) {
@@ -475,17 +475,24 @@ export async function run() {
 		const blink1 = counter.render(rec, blinkCfg, info(totals(50)));
 		counter.tick(totals(50));
 		const blink2 = counter.render(rec, blinkCfg, info(totals(50)));
-		check("闪烁模式逐帧切换亮/灰", blink1.includes("[muted]↑") && blink2.includes("[accent]↑"), `${blink1} | ${blink2}`);
+		check("闪烁模式逐帧切换白/灰", blink1.includes("[muted]↑") && blink2.includes("[text]↑"), `${blink1} | ${blink2}`);
 
 		check(
 			"速度与模型按开关附加",
 			counter.render(plainTheme(), liveCfg, { tps: 42, elapsedMs: 0, totals: totals(50), model: "mimo", thinkingLevel: "high" }).includes("42tok/s") &&
 				!counter.render(plainTheme(), { ...liveCfg, liveShowTps: false }, { tps: 42, elapsedMs: 0, totals: totals(50) }).includes("tok/s"),
 		);
+		const durLine = counter.render(plainTheme(), liveCfg, { tps: 42, elapsedMs: 212_000, totals: totals(50) });
+		check("动态行的耗时单独排第一段, 与计数段用圆点隔开", durLine.startsWith("3m32s · ↑") && durLine.includes("42tok/s ·"), durLine);
+		const caughtUp = new render.LiveCounter();
+		while (caughtUp.tick(totals(50))) {
+			/* 追上 */
+		}
+		const durColored = caughtUp.render(rec, liveCfg, { tps: 42, elapsedMs: 212_000, totals: totals(50), inputLevel: "high" });
 		check(
-			"动态行的耗时跟在速度后, 圆点前",
-			counter.render(plainTheme(), liveCfg, { tps: 42, elapsedMs: 212_000, totals: totals(50) }).includes("42tok/s 3m32s ·"),
-			counter.render(plainTheme(), liveCfg, { tps: 42, elapsedMs: 212_000, totals: totals(50) }),
+			"耗时的颜色取 pi 输入框边框色(随思考强度变)",
+			durColored.startsWith("[thinking:high]3m32s ") && durColored.includes("[muted]↑") && !durColored.includes("[text]"),
+			durColored,
 		);
 		check(
 			"动态行关掉耗时就没有耗时段",
@@ -574,11 +581,18 @@ export async function run() {
 			["显示箭头", "显示缓存", "显示预估金额", "显示速度", "显示耗时", "显示模型", "显示思考强度"].every((label) => subLines.some((line) => line.includes(label))),
 			JSON.stringify(subLines),
 		);
-		const firstSubItem = subLines.findIndex((line) => line.includes("显示箭头"));
+		const firstSubItem = subLines.findIndex((line) => line.includes("显示耗时"));
 		check(
 			"子菜单顶部空一行(不跟标题贴一起)",
 			firstSubItem > 0 && subLines[firstSubItem - 1].trim() === "",
 			JSON.stringify(subLines.slice(0, firstSubItem + 1)),
+		);
+		const subOrder = ["显示耗时", "显示箭头", "显示缓存", "显示速度", "显示模型", "显示思考强度", "显示预估金额"];
+		const subIndex = subOrder.map((label) => subLines.findIndex((line) => line.includes(label)));
+		check(
+			"子菜单顺序与行上从左到右一致(耗时排第一)",
+			subIndex.every((index, i) => index > 0 && (i === 0 || index > subIndex[i - 1])),
+			JSON.stringify(subIndex),
 		);
 		check(
 			"子菜单标题换成该项行标签",
@@ -592,7 +606,7 @@ export async function run() {
 			JSON.stringify(subLines.slice(Math.max(0, subFooter - 2), subFooter + 1)),
 		);
 		component.handleInput(ENTER);
-		check("子菜单改动生效", cfgPanel.liveShowArrows === false);
+		check("子菜单改动生效", cfgPanel.liveShowDuration === false);
 		component.handleInput(ESC);
 		check("返回一级菜单后摘要同步", component.render(80).map(stripAnsi).some((line) => line.includes("动态行显示项") && line.includes("2/7 开")));
 		check("退出子菜单后标题换回面板名", component.render(80).map(stripAnsi).some((line) => line.includes(mZh.settingsTitle)));
@@ -628,7 +642,7 @@ export async function run() {
 		const answers = [
 			mZh.animationLabels.blink, // animation
 			mZh.off, // live(动态行显示)
-			mZh.off, mZh.off, mZh.on, mZh.on, mZh.on, mZh.on, mZh.on, // 动态行七项(箭头/缓存/金额/速度/耗时/模型/思考强度)
+			mZh.off, mZh.off, mZh.on, mZh.on, mZh.on, mZh.on, mZh.on, // 动态行七项(耗时/箭头/缓存/速度/模型/思考强度/金额)
 			mZh.on, // resultInTranscript(结算行显示)
 			mZh.on, mZh.on, mZh.on, mZh.on, mZh.on, mZh.on, mZh.on, // 结算行七项
 			mZh.refreshMs(200), // refreshMs
@@ -646,9 +660,9 @@ export async function run() {
 			fallbackUi.calls.select[0].title,
 		);
 		check("第二问是动态行显示", asks(1, mZh.settings.live.label), fallbackUi.calls.select[1].title);
-		check("子菜单项带分组前缀", fallbackUi.calls.select[2].title.startsWith("动态行: 显示箭头? "), fallbackUi.calls.select[2].title);
+		check("子菜单项带分组前缀", fallbackUi.calls.select[2].title.startsWith("动态行: 显示耗时? "), fallbackUi.calls.select[2].title);
 		check("结算行显示在结算行七项之前", asks(9, mZh.settings.resultInTranscript.label), fallbackUi.calls.select[9].title);
-		check("结算行项带分组前缀", fallbackUi.calls.select[10].title.startsWith("结算行: 显示箭头? "));
+		check("结算行项带分组前缀", fallbackUi.calls.select[10].title.startsWith("结算行: 显示耗时? "));
 		check("降级模式的改动照样生效", cfgFallback.live === false && cfgFallback.animation === "blink" && cfgFallback.refreshMs === 200);
 		check("走完给提示", fallbackUi.calls.notify.at(-1)?.message === "token-meter 设置已保存");
 
@@ -715,10 +729,10 @@ export async function run() {
 		await emit(api.handlers, "before_agent_start", { type: "before_agent_start", prompt: "hi" }, ctx);
 		await emit(api.handlers, "agent_start", { type: "agent_start" }, ctx);
 		await sleep(150);
-		// 前缀用"思考强度边框色"(假主题渲染成 [thinking:<level>]), 计时自己套 muted, 不跟着一起变色
+		// 等待期的计时与动态行里的耗时同色: 都取输入框边框色(假主题渲染成 [thinking:<level>])
 		check(
-			"等待计时: 前缀用思考强度边框色, 计时保持灰色",
-			/^\[thinking:[a-z]+\]Working \[muted\]\d+s$/.test(calls.workingMessages.at(-1) ?? ""),
+			"等待计时: 前缀与计时都取思考强度边框色",
+			/^\[thinking:[a-z]+\]Working \[thinking:[a-z]+\]\d+s$/.test(calls.workingMessages.at(-1) ?? ""),
 			JSON.stringify(calls.workingMessages.slice(-2)),
 		);
 		await emit(api.handlers, "message_start", { type: "message_start", message: { role: "assistant", model: "test-model" } }, ctx);
