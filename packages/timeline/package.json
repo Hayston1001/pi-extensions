@@ -1,6 +1,6 @@
 {
   "name": "pi-timeline",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Message timeline for pi: list a session's user messages and jump to any of them with exact, instant scrolling.",
   "keywords": ["pi-package", "pi-extension", "timeline", "navigation"],
   "license": "MIT",
