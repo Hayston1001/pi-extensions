@@ -1,6 +1,6 @@
 {
 	"name": "@hayston/pi-token-meter",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Live token/cost meter for pi: a counter that grows next to the spinner and a per-round settlement line at the end of the transcript, with a settings panel.",
 	"keywords": ["pi-package", "pi-extension", "token-meter", "usage", "cost", "tui", "tokens"],
 	"license": "MIT",
