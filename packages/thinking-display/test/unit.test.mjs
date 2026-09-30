@@ -136,6 +136,17 @@ export async function run() {
 		check("两段各自判断", JSON.stringify(rule([think("a"), text("hi"), think("b")])) === "[true,false]");
 		check("空白正文不算可见内容", JSON.stringify(rule([think("a"), text("   ")])) === "[false]");
 
+		// pi 把展开的 thinking 渲染成斜体, 中文等字体下会被终端画成粗体; 这里只留颜色
+		const strip = index.stripEmphasis;
+		check(
+			"stripEmphasis: 去掉粗体与斜体, 保留颜色",
+			strip("\u001b[1m\u001b[3m\u001b[38;2;1;3;100mtext\u001b[22m\u001b[23m") ===
+				"\u001b[38;2;1;3;100mtext\u001b[22m\u001b[23m",
+			JSON.stringify(strip("\u001b[1m\u001b[3m\u001b[38;2;1;3;100mtext\u001b[22m\u001b[23m")),
+		);
+		check("stripEmphasis: 只含强调码时整段移除", strip("\u001b[1m\u001b[3m") === "");
+		check("stripEmphasis: 不动其它样式码", strip("\u001b[2mx\u001b[4my\u001b[0m") === "\u001b[2mx\u001b[4my\u001b[0m");
+
 		// ---------------------------------------------------------- 补丁接线
 		console.log("hook:");
 		rmSync(configFile, { force: true });
@@ -223,6 +234,42 @@ export async function run() {
 				typeof live.views[0].onMouse === "function",
 		);
 
+		// /reload 会留下旧世代的包装层, 它会先把子节点包成那一代的视图; 当前代必须拆开重包,
+		// 否则改完装饰器逻辑后旧逻辑会一直生效(曾经把 hover 加粗一直留在线上).
+		const staleRegion = {
+			child: { render: () => [], invalidate() {} },
+			onMouse: () => ({}),
+			render: () => ["\u001b[1mstale body\u001b[22m"],
+			handleMouse: () => ({ handled: true }),
+		};
+		const staleView = {
+			__piThinkingRegionView: true,
+			region: staleRegion,
+			component: live.component,
+			runIndex: 0,
+			hidden: false,
+			child: staleRegion.child,
+			onMouse: staleRegion.onMouse,
+			render: () => ["\u001b[1mstale body\u001b[22m"],
+			handleMouse: () => ({ handled: true }),
+		};
+		const staleHost = {
+			contentContainer: { children: [staleView] },
+			thinkingVisibilityOverrides: new Map(),
+			hideThinkingBlock: false,
+		};
+		index.decorateThinkingRegions(staleHost);
+		const rewrapped = staleHost.contentContainer.children[0];
+		check(
+			"旧世代装饰视图被重新包装成本代实例",
+			rewrapped !== staleView && rewrapped.__piThinkingRegionView === true && rewrapped.region === staleRegion,
+		);
+		check(
+			"重包后的展开正文走本代逻辑(去掉粗体)",
+			!rewrapped.render(40).join("").includes("\u001b[1m"),
+			JSON.stringify(rewrapped.render(40)),
+		);
+
 		const midTurn = render([think("first pass"), text("the answer"), think("second pass")]);
 		check("多段:前面的收起, 正在写的展开", JSON.stringify(midTurn.views.map((v) => v.hidden)) === "[true,false]");
 
@@ -247,7 +294,8 @@ export async function run() {
 		view.handleMouse({ type: "move" });
 		const afterHover = view.render(72)[0];
 		check("hover 前是暗琥珀色", beforeHover.includes(AMBER.dim));
-		check("hover 时提亮", afterHover.includes(AMBER.bright) && !afterHover.includes(AMBER.dim));
+		check("hover 时仅标记提亮", afterHover.includes(AMBER.bright) && !afterHover.includes(AMBER.dim));
+		check("展开文本为普通灰色, 无粗体与斜体", !afterHover.includes("\u001b[1m") && !afterHover.includes("\u001b[3m"));
 		check("hover 目标记在共享状态里(跨模块代际)", sharedState().hover?.runIndex === 0);
 		view.handleMouse({ type: "click", button: "left" });
 		const clicked = hovered.component.render(72).map(stripAnsi);

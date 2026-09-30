@@ -1,71 +1,12 @@
 /**
- * Thinking Display
+ * Thinking Display: 流式输出时仅展开当前生成的 thinking 段, 并提供标记, 悬停高亮和点击折叠.
+ * 设置可通过 `/thinking-display-settings` 随时修改.
  *
- * Two display behaviours for thinking blocks. Both are on by default and both
- * can be switched at runtime with `/thinking-display-settings`.
+ * 流式规则包装 `AssistantMessageComponent.updateContent`: 后面已有可见内容的 thinking 段收起, 当前段展开. 渲染完成后立即清除临时覆盖值.
  *
- * 1. Streaming collapse. While an assistant message is being generated, the
- *    thinking run that is currently being written stays expanded. As soon as
- *    any visible content starts streaming after it -- the final answer, a later
- *    thinking run, or a tool call -- it collapses again like every other one.
- *    The collapse therefore happens the moment the answer or the tool call
- *    starts, not when the turn ends.
+ * 标记层包装渲染器提供的 `MouseRegion`, 绘制 `+` / `-` 标记并转发点击. TUI 鼠标派发补丁负责清除悬停状态, 使指针移出后高亮消失. `Ctrl+T` 仍由 pi 控制整体 thinking 显示状态.
  *
- * How the patch hooks in: the interactive transcript renders thinking blocks in
- * `AssistantMessageComponent.updateContent(message, isStreaming)`, which
- * already receives the streaming flag and supports per-block visibility
- * overrides. This extension patches that class's prototype. Reaching the *live*
- * class is the fiddly part: pi loads extensions through jiti, and jiti evaluates
- * a directly imported bundle chunk in its own VM, producing a throwaway copy
- * whose prototype is never rendered. So the class is taken from the
- * `@earendil-works/pi-coding-agent` export (a jiti virtual module pointing at
- * the running CLI's namespace), with a native `require()` of the bundle chunk as
- * a second target (`require(esm)` shares Node's ESM cache, so it is the same
- * instance the CLI imported at startup). Wrapping `updateContent`:
- *   - while streaming: every thinking run that already has visible content after
- *     it (text, a later run, or a tool call) is forced hidden, the one still
- *     being written is forced visible;
- *   - the overrides are cleared right after the render is built, so nothing
- *     leaks into the finalized message.
- *
- * 2. Collapsible thinking affordance (see opencode's `ReasoningPart` /
- * `ReasoningHeader` for the reference):
- *   - every thinking block renders a fold marker on its first line: `+` when
- *     collapsed, `-` when expanded;
- *   - the marker and the hidden `Thinking...` label sit in a muted amber
- *     (#9c8353) that brightens to #f0c674 while the pointer is over the block.
- *     An expanded body keeps the theme's thinking colour and is only rendered
- *     bold on hover, so nothing ever repaints the block background;
- *   - clicking toggles the block open/closed, and clicking again closes it.
- *
- * The marker/hover layer is implemented by post-processing the children that
- * `updateContent` just built: the renderer already wraps every thinking run in a
- * `MouseRegion`, so each of those regions is replaced by a small decorator that
- * renders the marker, tracks hover and delegates clicks to the original region.
- * Hover-leave is detected by wrapping the TUI instance's `handleMouseEvent`:
- * pi only delivers `move` events to the component under the pointer, so the
- * decorator alone cannot tell when the pointer left. The wrapper clears the
- * hover target on every motion event before the normal dispatch runs, so the
- * block under the pointer (if any) re-claims it during that same dispatch.
- *
- * Ctrl+T stays the mode switch:
- *   - Ctrl+T = thinking blocks hidden  -> "streaming" mode (this extension's
- *     behavior) + click a single block to peek at it;
- *   - Ctrl+T = thinking blocks visible -> everything stays expanded as before.
- *
- * Everything is guarded: if the expected internals are missing (new Pi layout,
- * compiled binary, RPC/JSON/print mode, non-fullscreen TUI), the extension
- * silently does nothing and the stock behavior is preserved.
- *
- * Settings live in `~/.pi/agent/thinking-display.json` and only there: a package
- * directory is replaced wholesale on upgrade, so nothing is read from or written
- * next to the code (an early `config.json` beside the sources is read once and
- * migrated). They are edited with `/thinking-display-settings`, which opens a
- * panel in the style of pi's own `/settings`. That command takes no arguments --
- * anything after it only prints a usage hint and never changes the configuration
- * (re-capturing the live TUI and theme is its own command,
- * `/thinking-display-refresh`). A host without a UI prints the patch status
- * instead of opening anything.
+ * 扩展从运行中的 pi 实例获取组件类; 找不到所需接口时保持原行为. 配置保存在 `~/.pi/agent/thinking-display.json`, 旧位置配置只迁移一次. TUI 中命令打开设置面板, 无 UI 的宿主显示状态信息. 刷新 TUI 和主题使用独立命令 `/thinking-display-refresh`.
  */
 
 import fs from "node:fs";
@@ -90,32 +31,28 @@ import {
 import { configPath, loadConfig, saveConfig, shortenHomePath, type ThinkingDisplayConfig } from "./config.ts";
 
 /**
- * Keys of the shared markers. They are deliberately the ones this extension used
- * under its former name (thinking-stream): a copy still loaded from
- * `~/.pi/agent/extensions/thinking-stream` then shares them, so the two
- * cooperate instead of patching the same prototype twice. Internal, never
- * user-visible.
+ * 沿用旧扩展名的共享标记, 让旧路径加载的副本共用状态, 避免重复包装原型.
  */
 const PATCH_MARKER = "__piThinkingStreamPatched";
-/** Bump when the hook itself or the decorator changes; the marker records it. */
-const PATCH_VERSION = 4;
+/** 修改补丁或装饰器时递增. */
+const PATCH_VERSION = 7;
 const STATE_KEY = "__piThinkingStreamState";
-/** Own marker set on decorator instances so a re-run of the hook never double-wraps. */
+/** 防止重复包装装饰器. */
 const VIEW_MARKER = "__piThinkingRegionView";
-/** Widget key used only to borrow the live TUI instance and theme. */
+/** 获取当前 TUI 和主题的 widget 标识. */
 const RUNTIME_CAPTURE_KEY = "thinking-stream.runtime";
-/** Columns reserved for the `+` / `-` fold marker and its trailing space. */
+/** 折叠标记及其后空格占用的列数. */
 const MARKER_WIDTH = 2;
-/** Hover palette: the fold marker and the hidden `Thinking...` label switch between these. */
+/** 折叠标记和隐藏标签使用的悬停色板. */
 const AMBER_DIM: readonly [number, number, number] = [0x9c, 0x83, 0x53];
 const AMBER_BRIGHT: readonly [number, number, number] = [0xf0, 0xc6, 0x74];
-/** How often the borrowed theme may be refreshed while hovering (theme switches mid-session). */
+/** 悬停期间刷新主题的间隔. */
 const THEME_REFRESH_MS = 5000;
-/** Self-heal window: a hover with no follow-up motion decays after this long if the patch is dead. */
+/** 鼠标补丁失效且没有后续事件时, 悬停状态的保留时间. */
 const HOVER_DECAY_MS = 1500;
-/** Cap on tracked assistant messages (evicted oldest-first; only used for repainting). */
+/** 已跟踪消息上限, 超出时先移除最早的消息. */
 const MESSAGE_TRACK_LIMIT = 200;
-/** Prototype slots for the mouse-dispatch patch (see installMousePatch). */
+/** 鼠标派发补丁在原型上的状态槽. */
 const MOUSE_PATCH_SINK = "__piThinkingMouseSink";
 const MOUSE_PATCH_FLAG = "__piThinkingMousePatched";
 const INSTANCE_CAPTURE_FLAG = "__piThinkingInstanceCapture";
@@ -126,29 +63,29 @@ interface HoverTarget {
 }
 
 interface State {
-	/** Streaming rule switch (the config's `streaming`; field name kept from the old copy, see PATCH_MARKER). */
+	/** 是否启用流式折叠规则. */
 	enabled: boolean;
 	decorate: boolean;
-	/** Assistant messages rendered so far, so a settings change can repaint them (shared across module generations). */
+	/** 已渲染消息, 用于设置变更后的重绘. */
 	messages: Set<any>;
 	installed: boolean;
-	/** Active rule. Kept on globalThis so a reloaded extension can replace it without re-wrapping. */
+	/** 当前规则存于全局状态, 供 reload 后更新. */
 	compute: (content: readonly any[]) => boolean[];
-	/** Diagnostic: how many wrapper layers are installed, and which rule version they serve. */
+	/** 补丁层数和规则版本, 用于诊断. */
 	wraps: number;
 	ruleVersion: number;
 	chunk?: string;
 	reason?: string;
-	/** Live TUI instance, borrowed through a throwaway widget factory. */
+	/** 当前 TUI 实例. */
 	tui?: any;
-	/** Live theme, borrowed the same way. Used for hover/marker colors. */
+	/** 当前主题, 用于标记颜色. */
 	theme?: Theme;
-	/** Session context, kept so the borrowed theme can be refreshed. */
+	/** 用于刷新 TUI 和主题的会话上下文. */
 	ctx?: ExtensionContext;
-	/** Currently highlighted block, keyed by owning message + thinking-run index. */
+	/** 当前悬停的消息和 thinking 段. */
 	hover: HoverTarget | null;
 	themeCapturedAt: number;
-	/** Hover-leave bookkeeping: see armDecay for how these decide whether the mouse patch is live. */
+	/** 用于判断鼠标派发补丁是否正常工作. */
 	lastPatchedMouseAt: number;
 	lastHoverAt: number;
 	mousePatchInstalled: boolean;
@@ -176,7 +113,7 @@ function getState(): State {
 		global[STATE_KEY] = state;
 		return state;
 	}
-	// Backfill fields added after an older version created the shared state.
+	// 补齐旧版本共享状态中缺少的字段.
 	state.decorate ??= true;
 	state.messages ??= new Set();
 	state.hover ??= null;
@@ -187,13 +124,13 @@ function getState(): State {
 	return state;
 }
 
-/** Locate `<pi-package>/dist/bundle/chunks`, from the running CLI entry point. */
+/** 从 CLI 入口定位 pi 的 bundle chunks 目录. */
 function findChunksDir(): string | undefined {
 	const candidates: string[] = [];
 
 	const entry = process.argv[1];
 	if (entry) {
-		// <pkg>/dist/bundle/cli.js -> <pkg>/dist/bundle/chunks
+		// 从 bundle/cli.js 路径推导 chunks 目录.
 		candidates.push(path.join(path.dirname(entry), "chunks"));
 		let dir = path.dirname(entry);
 		for (let i = 0; i < 6; i += 1) {
@@ -209,7 +146,7 @@ function findChunksDir(): string | undefined {
 		const pkgEntry = require.resolve("@earendil-works/pi-coding-agent");
 		candidates.push(path.join(path.dirname(pkgEntry), "bundle", "chunks"));
 	} catch {
-		// ignore: fall through to the candidates collected above
+		// 忽略错误, 继续检查已收集的候选路径.
 	}
 
 	for (const candidate of candidates) {
@@ -218,7 +155,7 @@ function findChunksDir(): string | undefined {
 	return undefined;
 }
 
-/** The bundle is split into hashed chunks; find the one defining the transcript component. */
+/** 在 bundle 分块中查找定义 transcript 组件的文件. */
 function findComponentChunk(chunksDir: string): string | undefined {
 	let names: string[];
 	try {
@@ -244,12 +181,7 @@ function findComponentChunk(chunksDir: string): string | undefined {
 }
 
 /**
- * Which thinking runs should stay hidden while the message streams.
- *
- * A run is expanded only while nothing visible follows it yet: as soon as text,
- * a later thinking run, or a tool call starts streaming after it, it collapses.
- * Consecutive non-empty thinking blocks count as one run, empty ones are skipped
- * the same way the renderer skips them.
+ * 计算流式期间各 thinking 段的隐藏状态. 后续出现正文、另一段 thinking 或工具调用时收起. 连续非空块视为一段, 空块忽略.
  */
 export function computeStreamingVisibility(content: readonly any[]): boolean[] {
 	const hidden: boolean[] = [];
@@ -270,7 +202,7 @@ export function computeStreamingVisibility(content: readonly any[]): boolean[] {
 	return hidden;
 }
 
-/** Content that makes an earlier thinking run "done": text, another run, or a tool call. */
+/** 判断内容是否意味着前一段 thinking 已结束. */
 function isVisibleBlock(block: any): boolean {
 	if (block?.type === "text") return typeof block.text === "string" && !!block.text.trim();
 	if (block?.type === "thinking") return typeof block.thinking === "string" && !!block.thinking.trim();
@@ -279,36 +211,18 @@ function isVisibleBlock(block: any): boolean {
 }
 
 /* ------------------------------------------------------------------ *
- * Fold marker / hover / click
+ * 折叠标记、悬停和点击
  * ------------------------------------------------------------------ */
 
 /**
- * A decorator around the renderer's own thinking `MouseRegion`.
- *
- * `render` prefixes the first line with the fold marker and indents the rest, so
- * the block keeps the exact same line count (and therefore the same mouse
- * hit-box) as the stock component. `handleMouse` claims `move` events for the
- * hover highlight and delegates everything else -- notably the left click that
- * toggles `thinkingVisibilityOverrides` -- to the wrapped region.
- *
- * The decorator also impersonates the region it wraps: it forwards `child` and
- * `onMouse` (the two fields an actual `MouseRegion` carries), so code that
- * recognises a thinking block by that shape -- another extension walking the
- * message's children, for instance -- still sees one. Without this it would see
- * an unknown wrapper instead of a thinking block.
- *
- * That recognition is a cross-package contract: `packages/timeline` accepts this
- * wrapper either because of the forwarded fields or by scanning a few levels
- * into it (depth 3), and `packages/thinking-display/test/unit.test.mjs` pins the
- * forwarding. Reshaping this class or renaming `VIEW_MARKER` breaks that fallback,
- * so tell whoever is working on timeline before doing it.
+ * 包装 thinking `MouseRegion`, 添加标记并处理悬停, 其余事件转发给原区域. 保留 `child` 和 `onMouse` 供其它扩展识别 thinking 块. 这是与 `packages/timeline` 的接口约定; 修改结构或 `VIEW_MARKER` 时需同步检查相关实现和测试.
  */
 class ThinkingRegionView {
 	readonly region: any;
 	readonly component: any;
 	readonly runIndex: number;
 	readonly hidden: boolean;
-	/** The wrapped region's own fields, re-exposed so the wrapper is recognisable (see the class doc). */
+	/** 转发原区域字段, 供其它扩展识别. */
 	readonly child: any;
 	readonly onMouse: any;
 
@@ -332,10 +246,8 @@ class ThinkingRegionView {
 		const hovered = isHovered(state, this.component, this.runIndex);
 		const markerAnsi = amberAnsi(state, hovered);
 		const styledMarker = `${markerAnsi}${this.hidden ? "+" : "-"}\u001b[39m`;
-		// Collapsed blocks are just the hidden label, so recolour it with the marker.
-		// Expanded bodies keep the theme's thinking colour and only get bolder on hover.
+		// 收起标签使用标记颜色, 展开正文保留主题颜色.
 		const bodyAnsi = this.hidden ? markerAnsi : undefined;
-		const bodyBold = !this.hidden && hovered;
 
 		const innerWidth = Math.max(1, total - MARKER_WIDTH);
 		let innerLines: string[] = [];
@@ -354,9 +266,8 @@ class ThinkingRegionView {
 
 		for (let i = 0; i < innerLines.length; i += 1) {
 			let body = typeof innerLines[i] === "string" ? innerLines[i] : "";
-			if (bodyAnsi) body = recolorThinkingText(state, body, bodyAnsi);
-			// Bold only the body: the marker keeps its own colour and weight.
-			if (bodyBold) body = `\u001b[1m${body}\u001b[22m`;
+			// pi 把展开正文渲染成斜体, 中文等无斜体字形的字体会被终端画成粗体, 这里去掉强调只留灰色.
+			body = bodyAnsi ? recolorThinkingText(state, body, bodyAnsi) : stripEmphasis(body);
 			const line = i === 0 ? `${styledMarker} ${body}` : `${" ".repeat(MARKER_WIDTH)}${body}`;
 			out.push(fitLine(line, total));
 		}
@@ -377,7 +288,7 @@ function isHovered(state: State, component: any, runIndex: number): boolean {
 	return !!hover && hover.component === component && hover.runIndex === runIndex;
 }
 
-/** Pad or trim a rendered line to exactly `total` columns. */
+/** 将渲染行补齐或截断到指定列数. */
 function fitLine(line: string, total: number): string {
 	const lineWidth = visibleWidth(line);
 	if (lineWidth < total) return line + " ".repeat(total - lineWidth);
@@ -385,7 +296,7 @@ function fitLine(line: string, total: number): string {
 	return line;
 }
 
-/** Amber foreground for the marker / hidden label, honouring the theme's colour mode. */
+/** 根据主题颜色模式生成标记和隐藏标签的琥珀色. */
 function amberAnsi(state: State, bright: boolean): string {
 	const rgb = bright ? AMBER_BRIGHT : AMBER_DIM;
 	const theme = state.theme as { getColorMode?: () => string } | undefined;
@@ -411,7 +322,7 @@ function rgbToXterm256(rgb: readonly [number, number, number]): number {
 	return 16 + 36 * nearest(rgb[0]) + 6 * nearest(rgb[1]) + nearest(rgb[2]);
 }
 
-/** Swap the theme's `thinkingText` colour for the amber one (collapsed label only). */
+/** 仅将收起标签的 `thinkingText` 颜色替换为琥珀色. */
 function recolorThinkingText(state: State, line: string, amber: string): string {
 	const theme = state.theme as { getFgAnsi?: (color: string) => string } | undefined;
 	const source = typeof theme?.getFgAnsi === "function" ? theme.getFgAnsi("thinkingText") : undefined;
@@ -419,7 +330,34 @@ function recolorThinkingText(state: State, line: string, amber: string): string 
 	return line.split(source).join(amber);
 }
 
-/** The renderer's own thinking wrapper: `{ child, onMouse, render, handleMouse }`. */
+const SGR_RE = /\u001b\[([0-9;]*)m/g;
+
+/**
+ * 去掉 SGR 中的粗体(1)和斜体(3), 保留颜色等其它属性.
+ * `38` / `48` 后面的参数是颜色分量, 不能当样式码删除.
+ */
+export function stripEmphasis(line: string): string {
+	return line.replace(SGR_RE, (_match, params: string) => {
+		if (params === "") return _match;
+		const codes = params.split(";");
+		const kept: string[] = [];
+		for (let i = 0; i < codes.length; i += 1) {
+			const code = Number(codes[i]);
+			if (code === 38 || code === 48) {
+				const mode = Number(codes[i + 1]);
+				const span = mode === 5 ? 3 : mode === 2 ? 5 : 2;
+				kept.push(...codes.slice(i, i + span));
+				i += span - 1;
+				continue;
+			}
+			if (code === 1 || code === 3) continue;
+			kept.push(codes[i]);
+		}
+		return kept.length === 0 ? "" : `\u001b[${kept.join(";")}m`;
+	});
+}
+
+/** 渲染器提供的 thinking 区域结构. */
 function isMouseRegion(value: any): boolean {
 	return (
 		!!value &&
@@ -432,39 +370,32 @@ function isMouseRegion(value: any): boolean {
 }
 
 /**
- * Replace every thinking `MouseRegion` in a freshly built message body with a
- * decorated view. Must run while the streaming overrides are still applied so
- * the marker reflects the same visibility the renderer is about to use.
+ * 将消息中的 thinking `MouseRegion` 替换为装饰视图. 必须在流式覆盖生效时执行, 以保持标记与实际显示状态一致.
  */
-function decorateThinkingRegions(component: any): void {
+export function decorateThinkingRegions(component: any): void {
 	const children: any[] | undefined = component?.contentContainer?.children;
 	if (!Array.isArray(children)) return;
 
 	let runIndex = 0;
 	for (let i = 0; i < children.length; i += 1) {
 		const child = children[i];
-		const decorated = !!child && child[VIEW_MARKER] === true;
-		const region = !decorated && isMouseRegion(child);
-		if (!region && !decorated) continue;
+		// reload 后旧包装层会先包一层它那一代的视图; 这里拆回原始区域重新包装,
+		// 让最新一层的渲染逻辑获胜, 而不是一直沿用最早那一代.
+		const region = child?.[VIEW_MARKER] === true ? child.region : child;
+		if (!isMouseRegion(region)) continue;
 
-		if (region) {
-			const hidden = component?.thinkingVisibilityOverrides?.get(runIndex) ?? component?.hideThinkingBlock ?? false;
-			children[i] = new ThinkingRegionView(child, component, runIndex, hidden === true);
-		}
+		const hidden = component?.thinkingVisibilityOverrides?.get(runIndex) ?? component?.hideThinkingBlock ?? false;
+		children[i] = new ThinkingRegionView(region, component, runIndex, hidden === true);
 		runIndex += 1;
 	}
 }
 
 /* ------------------------------------------------------------------ *
- * Runtime borrowing (TUI instance + live theme) and hover-leave
+ * 获取 TUI、主题并处理悬停移出
  * ------------------------------------------------------------------ */
 
 /**
- * Borrow the live `TUI` instance and `Theme` through a zero-height widget
- * factory, and from the TUI arm the hover patch. `setWidget` runs the factory
- * synchronously, so both values are available right away; the widget itself is
- * left in place (it renders no lines, which matches the blank spacer an empty
- * widget container would show anyway).
+ * 通过零高度 widget 获取当前 `TUI` 和主题, 并安装鼠标补丁. widget 工厂会同步执行, 返回的组件不渲染内容.
  */
 function captureRuntime(state: State): void {
 	const ctx = state.ctx;
@@ -480,7 +411,7 @@ function captureRuntime(state: State): void {
 			return { render: () => [], invalidate() {} };
 		});
 	} catch {
-		// Some modes have no widget support; hover styling falls back to ANSI reverse.
+		// 不支持 widget 的模式下, 悬停样式退回 ANSI 反色.
 	}
 }
 
@@ -497,7 +428,7 @@ function clearDecay(state: State): void {
 	}
 }
 
-/** Drop the current hover target and redraw so the highlight goes away. */
+/** 清除悬停目标并重绘. */
 function clearHover(state: State, tui?: unknown): void {
 	const had = state.hover;
 	state.hover = null;
@@ -508,11 +439,7 @@ function clearHover(state: State, tui?: unknown): void {
 }
 
 /**
- * Self-heal: a hover that gets no follow-up motion would stay lit forever if the
- * mouse patch were not actually delivering events, so decay it after a while.
- * When the patch is live, every hover is preceded within a few milliseconds by
- * the raw event that cleared it, so the timer leaves the highlight alone and a
- * resting pointer stays highlighted.
+ * 鼠标补丁未生效时, 超时清除没有后续事件的悬停状态. 补丁正常时, 每次悬停前都会收到清除事件, 因此指针静止时高亮仍会保留.
  */
 function armDecay(state: State): void {
 	clearDecay(state);
@@ -526,7 +453,7 @@ function armDecay(state: State): void {
 	state.decayTimer = timer;
 }
 
-/** The block under the pointer claims the highlight (called from its MouseRegion move event). */
+/** 鼠标所在区域认领悬停高亮. */
 function hoverBlock(state: State, component: unknown, runIndex: number): void {
 	state.lastHoverAt = Date.now();
 	const previous = state.hover;
@@ -539,7 +466,7 @@ function hoverBlock(state: State, component: unknown, runIndex: number): void {
 	armDecay(state);
 }
 
-/** Raw mouse event sink: forget the highlight; a block may re-claim it right after. */
+/** 原始鼠标事件处理: 先清除高亮, 再由目标区域认领. */
 function onRawMouseEvent(tui?: unknown): void {
 	const state = getState();
 	state.lastPatchedMouseAt = Date.now();
@@ -547,20 +474,14 @@ function onRawMouseEvent(tui?: unknown): void {
 }
 
 /**
- * Patch the TUI's mouse dispatch so every raw event first drops the hover; the
- * block under the pointer then re-claims it during the same dispatch. Without
- * this the decorator never learns that the pointer left.
- *
- * The patch goes on the class prototype, not the instance: TUI mode switches
- * build fresh instances, and the wrapper reads the sink off the prototype on
- * every call so a reloaded extension module replaces it cleanly.
+ * 包装 TUI 原型上的鼠标派发方法, 每次事件先清除悬停状态, 再由鼠标所在区域重新认领. 挂在原型上可覆盖新建的 TUI 实例, 并支持 reload 后更新处理函数.
  */
 function installMousePatch(tui: unknown): void {
 	const state = getState();
 	try {
 		if (!tui || typeof tui !== "object") return;
 		const proto = Object.getPrototypeOf(tui) as Record<string, unknown> | null;
-		// Regular-mode TUIs have no component mouse dispatch; the decay timer covers them.
+		// regular mode 没有组件鼠标派发, 由超时逻辑清除悬停状态.
 		if (!proto || typeof proto.handleMouseEvent !== "function") return;
 
 		proto[MOUSE_PATCH_SINK] = onRawMouseEvent;
@@ -578,14 +499,12 @@ function installMousePatch(tui: unknown): void {
 		proto[MOUSE_PATCH_FLAG] = true;
 		state.mousePatchInstalled = true;
 	} catch {
-		// A failed patch only costs immediacy; armDecay takes over.
+		// 补丁失败只影响及时性, 超时逻辑仍可清除状态.
 	}
 }
 
 /**
- * Second channel to a live TUI instance: its `requestRender` is invoked with
- * `this`, so wrapping it lets a later instance install the patch even when the
- * widget factory could not hand one over.
+ * 备用方式: 包装实例的 `requestRender`, 在后续调用时为新实例安装鼠标补丁.
  */
 function armInstanceCapture(tui: unknown): void {
 	try {
@@ -601,12 +520,12 @@ function armInstanceCapture(tui: unknown): void {
 			return original.apply(this, args);
 		};
 	} catch {
-		// ignore: this is only a fallback channel
+		// 忽略错误, 此处仅为备用方案.
 	}
 }
 
 /* ------------------------------------------------------------------ *
- * Installation
+ * 安装补丁
  * ------------------------------------------------------------------ */
 
 async function collectComponentCandidates(): Promise<Array<{ source: string; Component: any }>> {
@@ -618,30 +537,26 @@ async function collectComponentCandidates(): Promise<Array<{ source: string; Com
 		candidates.push({ source, Component });
 	};
 
-	// The public export is the reliable path under pi's bundled runtime: pi loads
-	// extensions through jiti with virtual modules, so this specifier resolves to
-	// the live namespace of the running CLI.
+	// 优先使用公开导出. pi 的 jiti 虚拟模块会将其解析到当前 CLI 的运行时命名空间.
 	try {
 		const pkg = piPackage as any;
 		push("package export", pkg?.AssistantMessageComponent ?? pkg?.default?.AssistantMessageComponent);
 	} catch {
-		// ignore: fall through to the bundle chunk
+		// 忽略错误, 继续尝试 bundle 分块.
 	}
 
-	// Native require() of the bundle chunk goes through Node's own ESM cache
-	// (require(esm)), so it is the same instance the CLI imported at startup.
+	// 原生 require() 使用 Node 的 ESM 缓存, 可获取 CLI 启动时加载的同一实例.
 	const chunksDir = findChunksDir();
 	const chunkFile = chunksDir ? findComponentChunk(chunksDir) : undefined;
 	if (chunkFile) {
 		try {
 			push(chunkFile, createRequire(import.meta.url)(chunkFile)?.AssistantMessageComponent);
 		} catch {
-			// require(esm) can fail (for example on top-level await); fall back to a
-			// dynamic import, which only helps when this module itself is native.
+			// require(esm) 可能失败, 例如模块使用 top-level await. 再尝试动态导入.
 			try {
 				push(`${chunkFile} (import)`, (await import(pathToFileURL(chunkFile).href))?.AssistantMessageComponent);
 			} catch {
-				// ignore
+				// 忽略错误.
 			}
 		}
 	}
@@ -649,7 +564,7 @@ async function collectComponentCandidates(): Promise<Array<{ source: string; Com
 	return candidates;
 }
 
-/** Wrap `updateContent` on one concrete class. Safe to call more than once. */
+/** 包装指定类的 `updateContent`; 可重复调用. */
 function patchComponent(Component: any, _source: string): boolean {
 	const state = getState();
 	const proto = Component?.prototype;
@@ -657,9 +572,7 @@ function patchComponent(Component: any, _source: string): boolean {
 
 	const existingMarker = proto[PATCH_MARKER];
 	if (typeof existingMarker === "number" && existingMarker >= PATCH_VERSION) {
-		// Already wrapped by this or a newer load. Publish this module's rule through
-		// the shared state so the live wrapper picks it up instead of keeping a stale
-		// rule (this is what makes rule changes survive /reload without a restart).
+		// 已由当前或更新版本包装. 更新共享规则, 使现有补丁在 reload 后使用新逻辑.
 		state.compute = computeStreamingVisibility;
 		state.ruleVersion = PATCH_VERSION;
 		return true;
@@ -680,7 +593,7 @@ function patchComponent(Component: any, _source: string): boolean {
 			const hiddenPerRun = current.compute?.(content);
 			if (hiddenPerRun) {
 				for (let run = 0; run < hiddenPerRun.length; run += 1) {
-					// A manual click (peek at one block) outranks the automatic value.
+					// 手动点击的状态优先于自动规则.
 					if (overrides.has(run)) continue;
 					overrides.set(run, hiddenPerRun[run]);
 					applied.push(run);
@@ -688,22 +601,17 @@ function patchComponent(Component: any, _source: string): boolean {
 			}
 		}
 
-		// Wrapper layers from earlier versions of this extension can sit underneath
-		// (an older build left one behind on every /reload). They all treat
-		// `enabled: false` as "pass through", and the innermost layer would otherwise
-		// overwrite our overrides right before the render. Muting them while we call
-		// down the chain keeps the newest rule authoritative without a restart.
+		// reload 可能留下旧版包装层. 调用原方法期间暂时停用规则, 避免旧层覆盖当前的 visibility.
 		const savedEnabled = current.enabled;
 		current.enabled = false;
 		try {
 			const result = originalUpdateContent.call(this, message, isStreaming);
-			// Decorate while the automatic overrides are still applied so the fold
-			// marker matches the visibility the renderer is about to use.
+			// 自动覆盖仍生效时添加标记, 确保标记状态与渲染一致.
 			if (current.decorate) {
 				try {
 					decorateThinkingRegions(this);
 				} catch {
-					// A shape change upstream must not break message rendering.
+					// 上游结构变化不得影响消息渲染.
 				}
 			}
 			return result;
@@ -745,10 +653,10 @@ async function install(): Promise<boolean> {
 }
 
 /* ------------------------------------------------------------------ *
- * Settings (thinking-display.json + /thinking-display-settings)
+ * 设置面板和配置
  * ------------------------------------------------------------------ */
 
-/** Remember a rendered message so a settings change can rebuild it. */
+/** 记录已渲染消息, 供设置变更后重绘. */
 function noteMessage(state: State, component: any): void {
 	const messages = (state.messages ??= new Set<any>());
 	if (messages.has(component)) return;
@@ -759,13 +667,13 @@ function noteMessage(state: State, component: any): void {
 	messages.add(component);
 }
 
-/** Mirror a config file into the live state (the render hook reads the state, not the file). */
+/** 将配置同步到运行时状态. */
 function applyConfig(state: State, config: ThinkingDisplayConfig): void {
 	state.enabled = config.streaming;
 	state.decorate = config.decorate;
 }
 
-/** The live state as a config object, for writing back. */
+/** 获取用于写回的配置对象. */
 function currentConfig(state: State): ThinkingDisplayConfig {
 	return { streaming: state.enabled, decorate: state.decorate };
 }
@@ -777,18 +685,16 @@ interface SettingDef {
 	id: SettingId;
 	label: string;
 	description: string;
-	/** 当前值(显示文案) */
+	/** 当前显示值. */
 	current: (state: State) => string;
 }
 
-/** 开关的显示文案(面板与降级对话框共用) */
+/** 面板和对话框共用的开关文案. */
 const ON = "on";
 const OFF = "off";
 
 /**
- * 设置项表: 面板与降级对话框都从这一张表生成, 新增设置只改这里.
- * 文案目前是英文硬编码--本扩展还没做多语言; 要做时按技能 pi-ext-i18n 换成一张 zh/en 对照表,
- * 并把 `label` / `description` 改成从对照表取. 
+ * 面板和对话框共用此设置表. 新增设置时在此添加; 多语言文案按 pi-ext-i18n 技能维护.
  */
 const MENU: SettingDef[] = [
 	{
@@ -807,27 +713,23 @@ const MENU: SettingDef[] = [
 	},
 ];
 
-/** 面板标题; 页脚显示配置文件路径(与仓库其它包的设置面板一致) */
+/** 设置面板标题. */
 const PANEL_TITLE = "Thinking Display Settings";
 
-/** 命令不接受参数: 带了参数只给一句用法提示, 不动配置 */
+/** 命令不接受参数, 有参数时仅显示用法提示. */
 const USAGE_HINT = "thinking-display-settings takes no arguments. Run /thinking-display-settings to open the panel.";
 
 function boolText(value: boolean): string {
 	return value ? "on" : "off";
 }
 
-/** 显示文案 → 布尔值(`current()` 的反向; 面板回调拿到的就是显示文案) */
+/** 将显示文案转换为布尔值. */
 function valueToBool(value: string): boolean {
 	return value === ON;
 }
 
 /**
- * Repaint the messages that are already on screen.
- *
- * The fold marker is baked into the children of a rendered message, so a
- * settings change only becomes visible once `invalidate()` re-runs
- * `updateContent` (see noteMessage for how the components are collected).
+ * 重绘当前消息. 标记保存在消息子组件中, 设置变更后需调用 `invalidate()` 重新执行 `updateContent`.
  */
 function refreshRenderedMessages(): void {
 	const state = getState();
@@ -835,13 +737,13 @@ function refreshRenderedMessages(): void {
 		try {
 			component?.invalidate?.();
 		} catch {
-			// an upstream shape change must not break the settings command
+			// 上游结构变化不得影响设置命令.
 		}
 	}
 	(state.tui as { requestRender?: () => void } | undefined)?.requestRender?.();
 }
 
-/** Persist one setting and repaint what is on screen. */
+/** 保存设置并重绘当前消息. */
 function applySetting(id: SettingId, value: string): void {
 	const state = getState();
 	const on = valueToBool(value);
@@ -868,33 +770,25 @@ function statusLines(state: State): string[] {
 }
 
 /**
- * The glyph in front of the search box is a fixed `⌕` (same as the message list's search box).
- *
- * `SettingsList` builds its search `Input` itself and exposes no prompt option, so we set the field
- * directly; if pi ever renames it we just keep the default prompt.
+ * 将搜索框提示符设为 `⌕`, 与消息列表保持一致. `SettingsList` 未提供提示符选项, 若字段变更则保留默认值.
  */
 function useSearchGlyph(list: SettingsList): void {
 	try {
 		const input = (list as unknown as { searchInput?: { prompt?: string } }).searchInput;
 		if (input && typeof input.prompt === "string") input.prompt = "⌕ ";
 	} catch {
-		/* version difference: keep the default prompt */
+		/* 版本差异时保留默认提示符. */
 	}
 }
 
 /**
- * Settings panel: a border, the title, the native SettingsList (with search), a footer
- * showing the config path, and a closing border. Colors come from the theme handed to
- * the `ctx.ui.custom` factory, so the look matches pi's own `/settings`.
- * Values come from the live state and every change is written to disk at once.
+ * 设置面板使用原生 `SettingsList`, 显示配置路径并采用 pi `/settings` 的主题. 每次修改都会立即写入配置.
  */
 async function openSettingsPanel(ctx: ExtensionContext): Promise<void> {
 	const state = getState();
 
 	await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
-		// Colors are built from the live `theme` handed to this factory (same values
-		// as getSettingsListTheme()) so nothing depends on the global theme being
-		// initialised inside this jiti-loaded module.
+		// 使用工厂传入的实时主题, 不依赖 jiti 模块中的全局主题.
 		const listTheme: SettingsListTheme = {
 			label: (text, selected) => (selected ? theme.fg("accent", text) : text),
 			value: (text, selected) => (selected ? theme.fg("accent", text) : theme.fg("muted", text)),
@@ -906,8 +800,7 @@ async function openSettingsPanel(ctx: ExtensionContext): Promise<void> {
 		const border = (str: string) => theme.fg("border", str);
 		const container = new Container();
 		container.addChild(new DynamicBorder(border));
-		// Title and footer are indented two columns: SettingsList renders its rows and
-		// hint line from column 2, so this keeps them aligned with the list.
+		// 标题和页脚缩进两列, 与设置列表内容对齐.
 		container.addChild(new Text(theme.fg("accent", theme.bold(PANEL_TITLE)), 2, 0));
 
 		const items: SettingItem[] = MENU.map((def) => ({
@@ -943,8 +836,7 @@ async function openSettingsPanel(ctx: ExtensionContext): Promise<void> {
 }
 
 /**
- * 有 UI 但没有自定义组件的宿主(RPC 等): 按同一张表逐项问. 
- * 取消时已经改过的项保留, 不回滚--用户看到的是"改一项存一项". 
+ * 有 UI 但不支持自定义组件的宿主(RPC 等)逐项询问设置. 取消时保留已保存的修改.
  */
 async function openSettingsDialog(ctx: ExtensionContext): Promise<void> {
 	const state = getState();
@@ -959,22 +851,17 @@ async function openSettingsDialog(ctx: ExtensionContext): Promise<void> {
 let warned = false;
 
 export default function (pi: ExtensionAPI) {
-	// Read the config as early as possible: pi's /reload rebuilds the transcript
-	// before it emits session_start, so the hook has to serve the saved values from
-	// that very first render on.
+	// 尽早读取配置. reload 会在 session_start 前重建 transcript, 首次渲染就需要使用已保存的值.
 	const state = getState();
 	applyConfig(state, loadConfig());
 
 	pi.on("session_start", async (_event, ctx) => {
-		// Leave behind a file that can be edited by hand (same as the sibling packages).
-		// Every mode does this, not just the TUI: a headless host has no panel, so the
-		// file is the only way to configure this extension there.
+		// 所有模式都创建配置文件. 无界面宿主只能通过手动编辑文件配置.
 		if (!fs.existsSync(configPath())) saveConfig(loadConfig());
 
 		if (ctx.mode !== "tui") return;
 
-		// Re-read the file here as well: a hand-edited config takes effect on the
-		// next session without restarting pi.
+		// 会话启动时重新读取配置, 使手动修改无需重启 pi 即可生效.
 		applyConfig(state, loadConfig());
 		state.ctx = ctx;
 		state.hover = null;
@@ -982,8 +869,7 @@ export default function (pi: ExtensionAPI) {
 
 		if (await install()) return;
 
-		// Internals changed: stay inert, but say so once per module load (a /reload
-		// re-executes this module, so the flag starts out false again).
+		// 内部接口不可用时保持停用, 并在本次模块加载期间提示一次.
 		if (!warned && state.reason && ctx.hasUI) {
 			warned = true;
 			ctx.ui.notify(`thinking-display is inactive: ${state.reason}`, "warning");
@@ -993,8 +879,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("thinking-display-settings", {
 		description: "Thinking Display Settings(thinking-display.json)",
 		handler: async (args, ctx) => {
-			// No arguments: the panel in the TUI, a per-item dialog when the host has a UI
-			// but no custom components, a status report otherwise.
+			// 无参数时按宿主能力打开面板、逐项对话框或状态报告.
 			if (args.trim() !== "") {
 				ctx.ui.notify(USAGE_HINT, "warning");
 				return;
@@ -1011,8 +896,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Re-capture the live TUI / theme. This is not a setting, so it is its own command
-	// rather than an argument of the -settings command (see pi-ext-settings-panel).
+	// 单独提供命令重新获取 TUI 和主题, 不将其作为设置项.
 	pi.registerCommand("thinking-display-refresh", {
 		description: "Re-capture the live TUI and theme (thinking-display)",
 		handler: async (_args, ctx) => {
