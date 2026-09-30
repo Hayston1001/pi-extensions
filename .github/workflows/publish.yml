@@ -50,6 +50,56 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "publishing ${name}@${version} from ${dir}"
 
+      - name: prepare the release notes from both changelogs
+        id: notes
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          dir="${{ steps.target.outputs.dir }}"
+          tmp="${RUNNER_TEMP}/changelog"
+          mkdir -p "$tmp"
+
+          # The "## <version>" section of one changelog; the heading and the blank line
+          # after it are dropped.
+          extract() {
+            awk -v v="## $2" '
+              index($0, v) == 1 { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' "$1" | sed '/./,$!d'
+          }
+
+          # Both changelogs have to carry this version -- the body links to both, and a
+          # missing section means the two are out of sync. Checked before npm publish on
+          # purpose: the fix is to write the missing section, commit and re-tag, and that
+          # stays clean only while the version is still absent from npm.
+          for pair in "en:CHANGELOG.md" "zh:CHANGELOG_zh.md"; do
+            lang="${pair%%:*}"
+            file="${dir}/${pair#*:}"
+            if [ ! -f "$file" ]; then
+              echo "::error::${file} is missing -- a release needs both changelogs"
+              exit 1
+            fi
+            extract "$file" "$VERSION" > "${tmp}/${lang}"
+            if [ ! -s "${tmp}/${lang}" ]; then
+              echo "::error::${file} has no '## ${VERSION}' section -- add it, commit, then tag ${TAG} again"
+              exit 1
+            fi
+          done
+
+          # The body opens with a labelled language switch pointing at the full changelogs.
+          # GitHub renders the body outside the repository, so the changelog's own relative
+          # link would resolve against the release URL and 404 -- write both sides as
+          # absolute links pinned to the tag that triggered this run.
+          base="https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/${dir}"
+          body="${tmp}/body.md"
+          printf 'Changelog: [English](%s/CHANGELOG.md) | [简体中文](%s/CHANGELOG_zh.md)\n\n' "$base" "$base" > "$body"
+          cat "${tmp}/en" >> "$body"
+
+          echo "body=${body}" >> "$GITHUB_OUTPUT"
+
       - name: check npm supports trusted publishing
         run: |
           set -euo pipefail
@@ -147,7 +197,7 @@ jobs:
         working-directory: ${{ steps.target.outputs.dir }}
         run: npm publish
 
-      - name: create the GitHub release from CHANGELOG.md
+      - name: create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -163,19 +213,6 @@ jobs:
             exit 0
           fi
 
-          dir="${{ steps.target.outputs.dir }}"
-          notes="$(mktemp)"
-          # Grab the "## <version>" section of the package changelog.
-          awk -v v="## ${VERSION}" '
-            index($0, v) == 1 { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' "${dir}/CHANGELOG.md" > "$notes"
-          sed -i '/./,$!d' "$notes" # drop the blank line after the heading
-
-          if [ ! -s "$notes" ]; then
-            echo "no ${VERSION} section in ${dir}/CHANGELOG.md -- falling back to generated notes"
-            gh release create "$TAG" --title "${NAME}@${VERSION}" --generate-notes
-          else
-            gh release create "$TAG" --title "${NAME}@${VERSION}" --notes-file "$notes"
-          fi
+          # The body is prepared before publishing: the language switch plus the English
+          # "## <version>" section. See the "prepare the release notes" step.
+          gh release create "$TAG" --title "${NAME}@${VERSION}" --notes-file "${{ steps.notes.outputs.body }}"
