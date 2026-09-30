@@ -1,6 +1,6 @@
 {
 	"name": "pi-thinking-display",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Thinking-block display for pi: keep only the thinking run that is still streaming expanded, plus a fold marker with hover highlight and click-to-toggle, with a settings panel.",
 	"keywords": ["pi-package", "pi-extension", "thinking", "reasoning", "tui", "fold"],
 	"license": "MIT",
