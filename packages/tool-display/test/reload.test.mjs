@@ -61,7 +61,9 @@ export async function run() {
 		sessionManager: SessionManager.inMemory(),
 		sessionStartEvent: { type: "session_start", reason: "startup" },
 	});
-	const isOurs = () => session.getToolDefinition("bash")?.renderShell === "self";
+	// 渲染器由扩展的解析器决定; 工具定义本身保持内建(执行 / 参数 / 活跃集都不动)
+	const isOurs = (name = "bash") =>
+		session.extensionRunner.resolveToolRenderers(name, () => session.getToolDefinition(name))?.renderShell === "self";
 
 	await session.bindExtensions({
 		mode: "tui",
@@ -71,7 +73,12 @@ export async function run() {
 		shutdownHandler: () => {},
 		onError: () => {},
 	});
-	check("启动流程:绑定后覆盖已注册", isOurs());
+	check("启动流程: 解析器已生效", isOurs());
+	check("内建工具定义本身没被替换", session.getToolDefinition("bash")?.renderShell !== "self");
+	check(
+		"非本扩展的工具不受影响",
+		session.extensionRunner.resolveToolRenderers("mcp__srv__tool", () => ({ renderShell: "default" }))?.renderShell === "default",
+	);
 
 	let atRowCreation = false;
 	await session.reload({
@@ -80,7 +87,7 @@ export async function run() {
 			atRowCreation = isOurs();
 		},
 	});
-	check("reload:行创建那一瞬间定义已是覆盖版", atRowCreation);
-	check("reload:之后覆盖仍在", isOurs());
+	check("reload: 行创建那一瞬间解析器已生效", atRowCreation);
+	check("reload: 之后解析器仍在", isOurs());
 	return failures();
 }

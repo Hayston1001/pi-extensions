@@ -10,7 +10,7 @@
  * pi 的 context.expanded 只在 Ctrl+O 这类全局展开时才为真, 作为 "强制全展" 叠加
  * 
  */
-import type { Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { Theme, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Box, Container, MouseRegion, Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { debugLog, type ToolDisplayConfig } from "./config.ts";
@@ -30,7 +30,7 @@ import {
 	type ToolStatus,
 } from "./state.ts";
 
-export type AnyDef = ToolDefinition<any, any, any>;
+export type AnyRenderers = ToolRenderers;
 export type AnyResult = { content: Array<{ type: string; text?: string }> };
 
 /** 渲染上下文里我们用到的部分(其余字段原样透传给内建渲染器).  */
@@ -45,6 +45,10 @@ export interface RenderContextLike {
 	isPartial: boolean;
 	expanded: boolean;
 	isError: boolean;
+	/** pi 1.1+ 把设置里的左右留白传进来; 老版本没有这个字段. */
+	outputPad?: number;
+	/** pi 1.1+ 记录的执行耗时(ms), 结果落定后才给; 执行中/老版本为 undefined. */
+	durationMs?: number;
 }
 
 /** 我们在 context.state 里用的键(避开内建渲染器自己的键).  */
@@ -74,6 +78,15 @@ function baseContext(context: RenderContextLike, key: string): RenderContextLike
 }
 
 type BgKey = "toolPendingBg" | "toolErrorBg" | "toolSuccessBg";
+
+/**
+ * 左右留白: 原生工具行由 pi 按 outputPad 设置给外壳加内边距, 我们自己画外壳时得照着来,
+ * 否则改了 outputPad 只有本扩展的行不跟着动. 老版本 pi 没传这个字段, 当时的默认值是 1.
+ */
+function outputPadOf(context: RenderContextLike): number {
+	const value = context.outputPad;
+	return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 1;
+}
 
 function emptyText(): Component {
 	return new Text("", 0, 0);
@@ -113,8 +126,11 @@ function noteTiming(context: RenderContextLike, finished: boolean): void {
 	}
 }
 
-/** 本条调用的耗时(ms):实时跑读渲染上下文,历史回放读会话里的时间戳.  */
+/** 本条调用的耗时(ms): pi 记录的为准, 实时跑再退回渲染时间戳, 历史回放读会话里的时间戳.  */
 function durationOf(context: RenderContextLike): number | undefined {
+	if (typeof context.durationMs === "number" && Number.isFinite(context.durationMs)) {
+		return Math.max(0, context.durationMs);
+	}
 	const state = context.state as { startedAt?: number; endedAt?: number };
 	if (state.startedAt !== undefined) {
 		return Math.max(0, (state.endedAt ?? Date.now()) - state.startedAt);
@@ -224,9 +240,9 @@ function summaryText(name: string, context: RenderContextLike, result: AnyResult
 
 // ---------------------------------------------------------------- 单行构件
 
-/** 带状态背景的行块:与原版外壳同款(上下各一行垫高).  */
-function statusBox(status: ToolStatus, theme: Theme): Box {
-	return new Box(1, 1, (text) => theme.bg(bgKeyFor(status), text));
+/** 带状态背景的行块:与原版外壳同款(上下各一行垫高, 左右留白跟 pi 的设置).  */
+function statusBox(status: ToolStatus, theme: Theme, pad: number): Box {
+	return new Box(pad, 1, (text) => theme.bg(bgKeyFor(status), text));
 }
 
 /** compact 档折叠行里的工具名列表(超出上限收成 +N).  */
@@ -240,7 +256,7 @@ function toolNameLabel(id: string, config: ToolDisplayConfig): string {
 }
 
 /** compact 档汇总行:mini 报数量, low 报工具名;不带背景,状态由符号承担.  */
-function summaryLine(id: string, theme: Theme, expanded: boolean, config: ToolDisplayConfig): Component {
+function summaryLine(id: string, theme: Theme, expanded: boolean, config: ToolDisplayConfig, pad: number): Component {
 	const summary = batchSummary(id);
 	const total = summary.total;
 	let symbol: string;
@@ -261,7 +277,7 @@ function summaryLine(id: string, theme: Theme, expanded: boolean, config: ToolDi
 	const labelColor = hovered ? "text" : "muted";
 	const prefix = theme.fg(hovered ? "text" : "dim", expanded ? "-" : "+");
 	// 汇总行保持紧凑(不额外垫高), 上下留白用 pi 原生行距即可
-	return new Text(`${prefix} ${symbol} ${theme.fg(labelColor, label)}`, 0, 0);
+	return new Text(`${prefix} ${symbol} ${theme.fg(labelColor, label)}`, pad, 0);
 }
 
 // ---------------------------------------------------------------- 鼠标区域
@@ -364,16 +380,17 @@ function fallbackResult(result: AnyResult, theme: Theme): Component | undefined 
  */
 function buildStockCall(
 	name: string,
-	base: AnyDef,
+	base: AnyRenderers,
 	args: unknown,
 	theme: Theme,
 	context: RenderContextLike,
 	mode: RowMode,
 ): Component {
 	const selfFramed = (base.renderShell ?? "default") === "self";
+	const pad = outputPadOf(context);
 	if (mode === "medium" && (selfFramed || MEDIUM_HEADER_ONLY.has(name))) {
 		// medium 只要调用行: 这些工具的 renderCall 会把 diff / 文件正文也画进去, 这里跳过它自己画
-		const box = statusBox(statusOf(context), theme);
+		const box = statusBox(statusOf(context), theme, pad);
 		box.addChild(mediumCallLine(name, args, theme));
 		context.state[CALL_KEY] = undefined;
 		context.state[BOX_KEY] = box;
@@ -391,7 +408,7 @@ function buildStockCall(
 		context.state[BOX_KEY] = undefined;
 		return callComponent ?? fallbackCall(name, theme);
 	}
-	const box = statusBox(statusOf(context), theme);
+	const box = statusBox(statusOf(context), theme, pad);
 	box.addChild(callComponent ?? fallbackCall(name, theme));
 	context.state[BOX_KEY] = box;
 	return box;
@@ -408,7 +425,7 @@ let firstRenderLogged = false;
  */
 export function renderCallSlot(
 	name: string,
-	base: AnyDef,
+	base: AnyRenderers,
 	args: unknown,
 	theme: Theme,
 	context: RenderContextLike,
@@ -421,6 +438,7 @@ export function renderCallSlot(
 	noteTiming(context, false);
 	const id = context.toolCallId;
 	noteRowRender(id, name, args, statusOf(context), context.invalidate);
+	const pad = outputPadOf(context);
 
 	const tier = config.display;
 	// 点击都由本扩展接管, 所以 context.expanded 只可能来自 Ctrl+O(全局展开)
@@ -432,7 +450,7 @@ export function renderCallSlot(
 		if (!visible) {
 			context.state[MODE_KEY] = "hidden";
 			context.state[BOX_KEY] = undefined;
-			return owner ? summaryRegion(id, summaryLine(id, theme, false, config)) : emptyText();
+			return owner ? summaryRegion(id, summaryLine(id, theme, false, config, pad)) : emptyText();
 		}
 		// 单条形态: 跟 expandStyle(medium = 只给摘要, default = 原版带输出预览); 点一下翻成完整输出
 		const callOutput = forced || (rowOutput(id) ?? false);
@@ -444,7 +462,7 @@ export function renderCallSlot(
 		}
 		// 展开: 汇总行留在最上方(- 前缀), 下面是自己这一条的内容; 其余行各自画自己的
 		const container = new Container();
-		container.addChild(summaryRegion(id, summaryLine(id, theme, true, config)));
+		container.addChild(summaryRegion(id, summaryLine(id, theme, true, config, pad)));
 		container.addChild(content);
 		return container;
 	}
@@ -458,7 +476,7 @@ export function renderCallSlot(
 /** 结果槽位.  */
 export function renderResultSlot(
 	name: string,
-	base: AnyDef,
+	base: AnyRenderers,
 	result: AnyResult,
 	options: { expanded: boolean; isPartial: boolean },
 	theme: Theme,

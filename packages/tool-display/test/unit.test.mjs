@@ -99,6 +99,14 @@ export async function run() {
 	check("运行中显示 ⋯ n/5(带 + 前缀)", outs.t1.length === 1 && outs.t1[0].includes("+") && outs.t1[0].includes("⋯") && outs.t1[0].includes("0/5 tools"), outs.t1[0]);
 	check("汇总行紧凑单行(无额外垫高)", outs.t1.length === 1, JSON.stringify(outs.t1));
 
+	// pi 1.1+ 把设置里的左右留白传进渲染上下文: 自绘的汇总行要跟着缩进
+	const padCtx = makeContext("t1", {}, { outputPad: 3, isPartial: false, args: { command: "npm test" } });
+	const padOut = render.renderCallSlot("bash", base, padCtx.args, theme, padCtx, cfg).render(80);
+	check("汇总行按 outputPad 缩进", padOut[0].startsWith("   <dim>+"), JSON.stringify(padOut[0]));
+	const padZeroCtx = makeContext("t1", {}, { outputPad: 0, isPartial: false, args: { command: "npm test" } });
+	const padZeroOut = render.renderCallSlot("bash", base, padZeroCtx.args, theme, padZeroCtx, cfg).render(80);
+	check("outputPad 为 0 时不缩进", padZeroOut[0].startsWith("<dim>+"), JSON.stringify(padZeroOut[0]));
+
 	// 全部完成,t2 失败
 	state.noteToolEnd("t1", false);
 	state.noteToolEnd("t2", true);
@@ -311,6 +319,23 @@ export async function run() {
 	const timedOut = timedComp.render(80);
 	check("medium 摘要含耗时与 timeout", timedOut.some((l) => l.includes("3.4s") && l.includes("timeout 30s")), JSON.stringify(timedOut));
 
+	// pi 1.1+ 的结果自带 durationMs: 优先用它(bash 的 Took 与之一致, 历史回放也准)
+	const durState = {};
+	const durCtx = makeContext("md6", durState, { args: { command: "npm test" }, isPartial: false, durationMs: 2500 });
+	const durComp = render.renderCallSlot("bash", base, durCtx.args, theme, durCtx, medCfg);
+	render.renderResultSlot("bash", base, okResult, { expanded: false, isPartial: false }, theme, durCtx, medCfg);
+	const durOut = durComp.render(80);
+	check("medium 摘要优先用 pi 记录的 durationMs", durOut.some((l) => l.includes("2.5s")), JSON.stringify(durOut));
+
+	// 自绘外壳的左右留白同样跟 outputPad 走
+	const padMedCtx = makeContext("md7", {}, { args: { command: "npm test" }, isPartial: false, outputPad: 3 });
+	const padMedOut = render.renderCallSlot("bash", base, padMedCtx.args, theme, padMedCtx, medCfg).render(80);
+	check(
+		"自绘外壳按 outputPad 缩进",
+		padMedOut[1].includes("[toolSuccessBg]   call:npm test"),
+		JSON.stringify(padMedOut[1]),
+	);
+
 	// 执行中: 耗时已经出现且每秒刷新; 结束后清掉定时器
 	const liveState = {};
 	const liveCtx = makeContext("md4", liveState, { args: { command: "sleep 5" }, isPartial: true, executionStarted: true });
@@ -455,7 +480,7 @@ export async function run() {
 
 	// ---------------------------------------------------------- 面板
 	console.log("panel:");
-	const stripAnsi = (s) => s.replace(/\u001b\[[0-9;]*m/g, "");
+	const stripAnsi = (s) => s.replace(/\u001b_pi:[^\u0007]*\u0007/g, "").replace(/\u001b\[[0-9;]*m/g, "");
 	// 假 theme 用 <fg>..</> 与 [bg]..[/] 表示颜色, 去掉后才好断文字位置
 	const plain = (s) => stripAnsi(s).replace(/<[^>]*>/g, "").replace(/\[[^\]]*\]/g, "");
 	// applySetting 直接测(显示文案反查配置值)
@@ -577,11 +602,11 @@ export async function run() {
 
 	// ---------------------------------------------------------- index 接线
 	console.log("wiring:");
-	const registeredDefs = [];
+	const resolvers = [];
 	const handlers = {};
 	const commands = {};
 	const fakePi = {
-		registerTool: (d) => registeredDefs.push(d),
+		registerToolRenderer: (resolver) => resolvers.push(resolver),
 		on: (ev, h) => {
 			(handlers[ev] ??= []).push(h);
 			return () => {};
@@ -589,11 +614,22 @@ export async function run() {
 		registerCommand: (name, def) => {
 			commands[name] = def;
 		},
-		getActiveTools: () => ["read", "bash", "edit"],
 	};
 	ext.default(fakePi);
 	check("注册 /tool-display-settings 命令", typeof commands["tool-display-settings"]?.handler === "function");
 	check("事件监听已挂", !!handlers.message_update && !!handlers.tool_execution_start && !!handlers.tool_execution_end);
+	check("工厂阶段注册渲染器解析器", resolvers.length === 1, String(resolvers.length));
+
+	const baseRenderers = {
+		renderShell: "default",
+		renderCall: () => new Text("stock", 0, 0),
+		renderResult: () => new Text("stock result", 0, 0),
+	};
+	const wrapped = resolvers[0]("bash", () => baseRenderers);
+	check("解析器把内建工具换成 self 外壳", wrapped?.renderShell === "self");
+	check("解析器保留底座渲染器", typeof wrapped?.renderCall === "function" && typeof wrapped?.renderResult === "function");
+	check("不负责的工具原样交回", resolvers[0]("mcp__srv__tool", () => baseRenderers) === baseRenderers);
+	check("next() 没有底座时不接管", resolvers[0]("bash", () => undefined) === undefined);
 
 	let widgetSet = false;
 	handlers.session_start[0](null, {
@@ -607,36 +643,19 @@ export async function run() {
 			},
 		},
 	});
-	check(
-		"只覆盖启用的内建工具",
-		registeredDefs.length === 3 && registeredDefs.every((d) => ["read", "bash", "edit"].includes(d.name)),
-		JSON.stringify(registeredDefs.map((d) => d.name)),
-	);
-	check("renderShell 统一 self", registeredDefs.every((d) => d.renderShell === "self"));
-	check("execute 保留", registeredDefs.every((d) => typeof d.execute === "function"));
 	check("hover widget 已挂", widgetSet);
+	check("session_start 不重复注册解析器", resolvers.length === 1, String(resolvers.length));
 
-	// 同一运行时重复 session_start 不得重复注册
-	handlers.session_start[0](null, {
-		cwd: "/proj",
-		isProjectTrusted: () => true,
-		mode: "print",
-		sessionManager: { getBranch: () => [], getLeafId: () => "leaf1" },
-		ui: {},
-	});
-	check("同运行时去重", registeredDefs.length === 3, String(registeredDefs.length));
-
-	// /reload 回归:模块状态被缓存复用但运行时重建 -- 新 API 对象必须重新注册
-	const registered2 = [];
+	// /reload 回归: 模块状态被缓存复用但运行时重建 -- 新 API 对象必须重新挂解析器
+	const resolvers2 = [];
 	const handlers2 = {};
 	const fakePi2 = {
-		registerTool: (d) => registered2.push(d),
+		registerToolRenderer: (resolver) => resolvers2.push(resolver),
 		on: (ev, h) => {
 			(handlers2[ev] ??= []).push(h);
 			return () => {};
 		},
 		registerCommand: () => {},
-		getActiveTools: () => ["read", "bash", "edit"],
 	};
 	ext.default(fakePi2);
 	handlers2.session_start[0](null, {
@@ -646,11 +665,8 @@ export async function run() {
 		sessionManager: { getBranch: () => [], getLeafId: () => "leaf2" },
 		ui: {},
 	});
-	check("reload 后新运行时重新注册", registered2.length === 3, String(registered2.length));
-	check("reload 后定义仍是 self 外壳", registered2.every((d) => d.renderShell === "self"));
-	// 兑底:before_agent_start 也会补注册(上面已注册过则无副作用)
-	handlers2.before_agent_start[0]({});
-	check("before_agent_start 兑底不重复注册", registered2.length === 3, String(registered2.length));
+	check("reload 后新运行时重新注册解析器", resolvers2.length === 1, String(resolvers2.length));
+	check("reload 后解析器仍返回 self 外壳", resolvers2[0]("bash", () => baseRenderers)?.renderShell === "self");
 
 	const notified = [];
 	const expandedCalls = [];
