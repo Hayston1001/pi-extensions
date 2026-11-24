@@ -146,8 +146,8 @@ jobs:
           set -euo pipefail
           pkg="@earendil-works/pi-coding-agent"
 
-          # Install globally: the harness expects pi-tui nested inside pi-coding-agent,
-          # which is how global installs lay out; PI_PACKAGE_DIR points it at that copy.
+          # Install globally: PI_PACKAGE_DIR points the harness at that copy (it also finds
+          # the pi.dev managed install and pi-tui's location on its own).
           # The registry's `latest` has pointed at a version whose tarball 404'd, so walk
           # back from `latest` through the versions published before it until one installs.
           # Read the raw packument rather than `npm view --json`: the JSON shape that
