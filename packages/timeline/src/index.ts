@@ -162,7 +162,7 @@ function transcriptLines(tui: unknown, view: ScrollViewLike): string[] {
 function stripAnsi(text: string): string {
 	return text
 		.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "") // OSC(含 OSC 133 标记与超链接)
-		.replace(/\x1b_pi:c\x07/g, "") // 光标标记
+		.replace(/\x1b_pi:[^\x07]*\x07/g, "") // pi-tui 的硬件光标标记与假光标起止
 		.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "") // CSI
 		.replace(/\x1b[()][A-Za-z0-9]/g, "")
 		.replace(/\x1b[=>]/g, "");

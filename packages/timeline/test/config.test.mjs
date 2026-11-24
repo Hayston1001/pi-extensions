@@ -315,7 +315,8 @@ export async function run() {
 		// 渲染里夹着颜色码/光标标记, 先剥掉再匹配文案
 		const plain = result.rendered
 			.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-			.replace(/\x1b_pi:c\x07/g, "")
+			// pi-tui 的硬件光标标记与假光标起止夹在占位文案中间, 先剥掉再匹配
+			.replace(/\x1b_pi:[^\x07]*\x07/g, "")
 			.replace(/\x1b\[[0-9;]*m/g, "");
 		assert.match(plain, /Mode: user/, `没看到英文界面: \n${plain}`);
 		assert.match(plain, /Filter messages/);
@@ -514,7 +515,7 @@ export async function run() {
 			tui,
 			inputs: [KEY.down, KEY.escape],
 		});
-		const lines = result.rendered.replace(/\x1b\[[0-9;]*m/g, "").split("\n");
+		const lines = result.rendered.replace(/\x1b_pi:[^\x07]*\x07/g, "").replace(/\x1b\[[0-9;]*m/g, "").split("\n");
 		assert.match(lines[0], /^─+$/, "第一行应当是 DynamicBorder");
 		assert.match(lines.at(-1), /^─+$/, "最后一行应当是 DynamicBorder");
 		assert.ok(lines[1].startsWith("  Timeline 设置"), "标题应当左缩进 2");
@@ -536,7 +537,7 @@ export async function run() {
 		const load2 = await loadTimeline({ copyTo: join(work2.dir, "ext"), config: '{"shortcut":"alt+g"}' });
 		const { tui } = makeFakeTui([]);
 		const result = await driveCommand({ load: load2, name: "timeline-settings", tui, inputs: [] });
-		const lines = result.rendered.replace(/\x1b\[[0-9;]*m/g, "").split("\n");
+		const lines = result.rendered.replace(/\x1b_pi:[^\x07]*\x07/g, "").replace(/\x1b\[[0-9;]*m/g, "").split("\n");
 		assert.equal(lines[1].trim(), "Timeline 设置");
 		assert.equal(lines[2].trim(), "⌕", `搜索行应当以 ⌕ 开头: ${JSON.stringify(lines[2])}`);
 		work2.cleanup();

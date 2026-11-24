@@ -18,6 +18,24 @@ export const EXT_ENTRY = join(EXT_DIR, "src", "index.ts");
 // 找 pi 包
 // ---------------------------------------------------------------------------
 
+/** pi.dev 安装器把每个版本放在 ~/.pi/agent/install/releases/<version> 下. */
+function managedInstallCandidates() {
+	const candidates = [];
+	const roots = [
+		process.env.PI_MANAGED_INSTALL_ROOT,
+		join(homedir(), ".pi", "agent", "install"),
+	].filter(Boolean);
+	for (const root of roots) {
+		try {
+			const version = readFileSync(join(root, "current-version"), "utf8").trim();
+			if (version) candidates.push(join(root, "releases", version, "node_modules", "@earendil-works", "pi-coding-agent"));
+		} catch {
+			/* 不是托管安装 */
+		}
+	}
+	return candidates;
+}
+
 function piPackageCandidates() {
 	const candidates = [];
 	// 直接在 pi 的仓库里跑测试时(本包可解析)
@@ -27,6 +45,7 @@ function piPackageCandidates() {
 		/* 不出现在 node_modules 里, 正常 */
 	}
 	if (process.env.PI_PACKAGE_DIR) candidates.push(process.env.PI_PACKAGE_DIR);
+	candidates.push(...managedInstallCandidates());
 	const roots = [
 		process.env.APPDATA && join(process.env.APPDATA, "npm", "node_modules"),
 		join(homedir(), ".npm-global", "lib", "node_modules"),
@@ -53,18 +72,33 @@ export const PI_PACKAGE = findPiPackage();
 const PI_DIST = join(PI_PACKAGE, "dist");
 export const PI_ENTRY_URL = pathToFileURL(join(PI_DIST, "index.js")).href;
 
+/**
+ * pi-tui 的位置随安装方式不同: 托管安装与新版 npm 全局安装把它和 pi-coding-agent 并列
+ * 放在 node_modules/@earendil-works 下, 老布局才嵌在 pi-coding-agent 里面. 先按 Node 的
+ * 解析规则从 pi-coding-agent 出发找, 再退回两种已知布局.
+ */
 function findPiTui() {
-	const candidates = [
-		join(PI_PACKAGE, "node_modules", "@earendil-works", "pi-tui"),
-		join(dirname(PI_PACKAGE), "pi-tui"),
-	];
-	for (const root of piPackageCandidates()) {
-		candidates.push(join(dirname(dirname(root)), "pi-tui"));
+	const candidates = [];
+	try {
+		const require = createRequire(join(PI_PACKAGE, "package.json"));
+		try {
+			candidates.push(dirname(require.resolve("@earendil-works/pi-tui/package.json")));
+		} catch {
+			candidates.push(dirname(dirname(require.resolve("@earendil-works/pi-tui"))));
+		}
+	} catch {
+		/* 不在解析路径上, 按布局猜 */
 	}
+	if (process.env.PI_TUI_DIR) candidates.push(process.env.PI_TUI_DIR);
+	candidates.push(join(PI_PACKAGE, "node_modules", "@earendil-works", "pi-tui"));
+	candidates.push(join(dirname(PI_PACKAGE), "pi-tui"));
 	for (const candidate of candidates) {
 		if (existsSync(join(candidate, "package.json"))) return candidate;
 	}
-	throw new Error("找不到 @earendil-works/pi-tui");
+	throw new Error(
+		"找不到 @earendil-works/pi-tui. \n" +
+			"如果 pi 装在非标准位置, 设环境变量 PI_TUI_DIR 指向那个包目录再跑测试. ",
+	);
 }
 
 export const PI_TUI = findPiTui();
