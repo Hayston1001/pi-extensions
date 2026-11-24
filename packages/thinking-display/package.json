@@ -9,7 +9,7 @@
 		"url": "git+https://github.com/Hayston1001/pi-extensions.git",
 		"directory": "packages/thinking-display"
 	},
-	"files": ["src", "README.md", "README_zh.md"],
+	"files": ["src", "README.md", "README_zh.md", "CHANGELOG.md", "CHANGELOG_zh.md"],
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	},
