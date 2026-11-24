@@ -286,13 +286,30 @@ export default function tokenMeter(pi: ExtensionAPI) {
 
 	// ---------------------------------------------------------------- 对话区结算行
 
+	/**
+	 * transcript 的左右留白(pi 的设置只有 0 / 1). 入口渲染器拿不到 `options.outputPad`
+	 * (pi 只传 expanded / keyHint), 所以从 getSettings() 读; 老版本没有这个接口时按默认 1.
+	 */
+	function transcriptPad(): number {
+		try {
+			const settings = (pi as unknown as { getSettings?: () => { outputPad?: unknown } }).getSettings?.();
+			return settings?.outputPad === 0 ? 0 : 1;
+		} catch {
+			return 1;
+		}
+	}
+
 	pi.registerEntryRenderer(ENTRY_TYPE, (entry, _options, theme: Theme): Component | undefined => {
 		const summary = entry.data as RoundSummary | undefined;
 		if (!summary || !summary.totals) return undefined;
 		const line = buildResultLine(summary, cfg, theme);
+		// 入口渲染器返回的组件自己排版: 跟原生消息一样按 outputPad 缩进, 否则结算行会贴左一格
+		const pad = transcriptPad();
 		return {
 			render(width: number): string[] {
-				return [truncateToWidth(line, width, theme.fg("dim", "..."))];
+				const inner = Math.max(1, width - pad * 2);
+				const text = truncateToWidth(line, inner, theme.fg("dim", "..."));
+				return [pad > 0 ? `${" ".repeat(pad)}${text}` : text];
 			},
 			invalidate(): void {},
 		};

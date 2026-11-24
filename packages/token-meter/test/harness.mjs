@@ -4,7 +4,7 @@
  *  - 用与 pi 线上一致的 jiti + 别名加载扩展模块
  *  - 提供面板 / 事件接线测试用的假 ExtensionAPI, ui context, 主题与可控时钟
  */
-import { cpSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,6 +19,24 @@ if (!process.env.PI_CODING_AGENT_DIR) {
 }
 export const AGENT_DIR = process.env.PI_CODING_AGENT_DIR;
 
+/** pi.dev 安装器把每个版本放在 ~/.pi/agent/install/releases/<version> 下. */
+function managedInstallCandidates() {
+	const candidates = [];
+	const roots = [
+		process.env.PI_MANAGED_INSTALL_ROOT,
+		join(homedir(), ".pi", "agent", "install"),
+	].filter(Boolean);
+	for (const root of roots) {
+		try {
+			const version = readFileSync(join(root, "current-version"), "utf8").trim();
+			if (version) candidates.push(join(root, "releases", version, "node_modules", "@earendil-works", "pi-coding-agent"));
+		} catch {
+			/* 不是托管安装 */
+		}
+	}
+	return candidates;
+}
+
 function piPackageCandidates() {
 	const candidates = [];
 	try {
@@ -27,6 +45,7 @@ function piPackageCandidates() {
 		/* 不在 node_modules 里,正常 */
 	}
 	if (process.env.PI_PACKAGE_DIR) candidates.push(process.env.PI_PACKAGE_DIR);
+	candidates.push(...managedInstallCandidates());
 	const roots = [
 		process.env.APPDATA && join(process.env.APPDATA, "npm", "node_modules"),
 		join(homedir(), ".npm-global", "lib", "node_modules"),
@@ -50,7 +69,37 @@ function findPiPackage() {
 }
 
 export const PI_PACKAGE = findPiPackage();
-export const PI_TUI = join(PI_PACKAGE, "node_modules", "@earendil-works", "pi-tui");
+
+/**
+ * pi-tui 的位置随安装方式不同: 托管安装与新版 npm 全局安装把它和 pi-coding-agent 并列
+ * 放在 node_modules/@earendil-works 下, 老布局才嵌在 pi-coding-agent 里面. 先按 Node 的
+ * 解析规则从 pi-coding-agent 出发找, 再退回两种已知布局.
+ */
+function findPiTui() {
+	const candidates = [];
+	try {
+		const require = createRequire(join(PI_PACKAGE, "package.json"));
+		try {
+			candidates.push(dirname(require.resolve("@earendil-works/pi-tui/package.json")));
+		} catch {
+			candidates.push(dirname(dirname(require.resolve("@earendil-works/pi-tui"))));
+		}
+	} catch {
+		/* 不在解析路径上, 按布局猜 */
+	}
+	if (process.env.PI_TUI_DIR) candidates.push(process.env.PI_TUI_DIR);
+	candidates.push(join(PI_PACKAGE, "node_modules", "@earendil-works", "pi-tui"));
+	candidates.push(join(dirname(PI_PACKAGE), "pi-tui"));
+	for (const candidate of candidates) {
+		if (candidate && existsSync(join(candidate, "package.json"))) return candidate;
+	}
+	throw new Error(
+		"找不到 @earendil-works/pi-tui. \n" +
+			"如果 pi 装在非标准位置, 设环境变量 PI_TUI_DIR 指向那个包目录再跑测试. ",
+	);
+}
+
+export const PI_TUI = findPiTui();
 const PI_ENTRY = join(PI_PACKAGE, "dist", "index.js");
 const PI_TUI_ENTRY = join(PI_TUI, "dist", "index.js");
 
@@ -273,5 +322,6 @@ export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export function stripAnsi(text) {
 	return String(text)
 		.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+		.replace(/\u001b_pi:[^\u0007]*\u0007/g, "")
 		.replace(/\u001b\[[0-9;]*m/g, "");
 }

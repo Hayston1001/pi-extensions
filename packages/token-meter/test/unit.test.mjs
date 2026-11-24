@@ -764,6 +764,18 @@ export async function run() {
 		check("结算后清掉工作行", calls.workingMessages.at(-1) === undefined);
 		const entryComponent = api.entryRenderers.get("token-meter.summary")({ data: roundData }, {}, plainTheme());
 		check("入口渲染器画出结算行", /↑100 ↓50/.test(entryComponent.render(80)[0]), entryComponent.render(80)[0]);
+		check(
+			"结算行按 pi 的 outputPad 缩进(默认 1)",
+			entryComponent.render(80)[0].startsWith(" "),
+			JSON.stringify(entryComponent.render(80)[0]),
+		);
+		api.api.getSettings = () => ({ outputPad: 0 });
+		const flushEntry = api.entryRenderers.get("token-meter.summary")({ data: roundData }, {}, plainTheme());
+		check(
+			"outputPad=0 时结算行贴左",
+			!flushEntry.render(80)[0].startsWith(" "),
+			JSON.stringify(flushEntry.render(80)[0]),
+		);
 		const afterSettle = calls.workingMessages.length;
 		await sleep(150);
 		check("结算后不再刷新动态行", calls.workingMessages.length === afterSettle);
